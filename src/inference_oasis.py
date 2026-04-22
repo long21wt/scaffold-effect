@@ -1105,17 +1105,8 @@ class InferencePipeline:
             e for e in all_entries if os.path.isfile(os.path.join(base_path, e))
         )
 
-        print(f"[DEBUG] txt_path       : {base_path}")
-        print(f"[DEBUG] mri_base_path  : {mri_base}")
-        print(f"[DEBUG] mode           : {mode}")
-        print(
-            f"[DEBUG] total entries  : {len(all_entries)}  |  text files: {len(txt_files)}"
-        )
         if not txt_files:
-            print("[ERROR] No files found in txt_path!")
-            return
-        print(f"[DEBUG] First files    : {txt_files[:5]}")
-        print()
+            raise SystemExit(f"no files in {base_path}")
 
         with open(self.config.output_file, "w", encoding="utf-8") as out_f:
             for txt_file in tqdm(txt_files):
@@ -1133,7 +1124,7 @@ class InferencePipeline:
                     )
                     if mri_subject_path is None:
                         print(
-                            f"[WARN] No MRI folder found for '{subject_id}' in {mri_base} — skipping."
+                            f"no MRI for {subject_id}, skipping"
                         )
                         continue
                 else:
@@ -1252,18 +1243,6 @@ Examples:
 
 
 def validate_args(args):
-    if args.mode in [
-        "tabular_parcel",
-        "tabular_mri",
-        "tabular_parcel_mri",
-        "parcel_mri",
-    ]:
-        if not args.mri_base_path:
-            # Default to txt_path — print info so user knows
-            print(
-                f"[INFO] --mri_base_path not set; defaulting to --txt_path ({args.txt_path})"
-            )
-
     if not os.path.exists(args.txt_path):
         raise FileNotFoundError(f"txt_path does not exist: {args.txt_path}")
     if args.mri_base_path and not os.path.exists(args.mri_base_path):
@@ -1280,7 +1259,6 @@ def validate_args(args):
         args.output_file = (
             f"oasis_results_{model_base}_{txt_base}_{mri_base}_{args.mode}.jsonl"
         )
-        print(f"[INFO] Output file: {args.output_file}")
 
     return args
 
@@ -1300,26 +1278,9 @@ if __name__ == "__main__":
         do_sample=args.do_sample,
     )
 
-    print("=" * 60)
-    print("INFERENCE CONFIGURATION")
-    print("=" * 60)
-    print(f"Model          : {config.model_name}")
-    print(f"Mode           : {args.mode}")
-    print(f"txt_path       : {config.txt_path}")
-    print(f"mri_base_path  : {config.mri_base_path}")
-    print(f"Output file    : {config.output_file}")
-    print(f"Max new tokens : {config.max_new_tokens}")
-    print(f"Do sample      : {config.do_sample}")
-    print(f"Seed           : {args.seed}")
-    print("=" * 60)
-    print()
+    print(f"model={config.model_name}  mode={args.mode}  out={config.output_file}")
 
-    print("Initializing model...")
     pipeline = InferencePipeline(config)
-    print(f"Running inference in '{args.mode}' mode...")
     pipeline.run(mode=args.mode)
 
-    print()
-    print("=" * 60)
-    print(f"Done! Results saved to: {config.output_file}")
-    print("=" * 60)
+    print(f"saved {config.output_file}")

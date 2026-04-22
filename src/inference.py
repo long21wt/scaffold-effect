@@ -1284,28 +1284,9 @@ if __name__ == "__main__":
         do_sample=args.do_sample,
     )
 
-    # Print configuration
-    print("=" * 60)
-    print("INFERENCE CONFIGURATION")
-    print("=" * 60)
-    print(f"Model: {config.model_name}")
-    print(f"Mode: {args.mode}")
-    print(f"Text path: {config.txt_path}")
-    print(f"MRI base path: {config.mri_base_path}")
-    print(f"Output file: {config.output_file}")
-    print(f"Max new tokens: {config.max_new_tokens}")
-    print(f"Do sample: {config.do_sample}")
-    print(f"Seed: {args.seed}")
-    print("=" * 60)
-    print()
+    print(f"model={config.model_name}  mode={args.mode}  out={config.output_file}")
 
-    # Run pipeline
-    print("Initializing model...")
     pipeline = InferencePipeline(config)
-    print(f"Running inference in '{args.mode}' mode...")
     pipeline.run(mode=args.mode)
 
-    print()
-    print("=" * 60)
-    print(f"Done! Results saved to: {config.output_file}")
-    print("=" * 60)
+    print(f"saved {config.output_file}")

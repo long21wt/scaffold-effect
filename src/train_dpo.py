@@ -123,6 +123,8 @@ def main(args):
 
     peft_config = build_lora_config() if not args.full_finetune else None
 
+    # max_length=None: avoids image token length mismatch
+    # loss_type: sigmoid×0.8 + bco_pair×0.2 + sft×1.0
     trainer = DPOTrainer(
         model=model,
         args=config,
@@ -135,21 +137,12 @@ def main(args):
     if peft_config is not None:
         trainer.model.print_trainable_parameters()
 
-    print("\n" + "=" * 60)
-    print("Starting MPO fine-tuning")
-    print(f"  Model      : {MODEL_NAME}")
-    print(f"  Dataset    : {args.dataset_dir}")
-    print(f"  Output     : {args.output_dir}")
-    print(f"  LoRA       : {not args.full_finetune}")
-    print("  max_length : None  ← image token mismatch fix")
-    print("  Loss       : MPO [sigmoid×0.8 + bco_pair×0.2 + sft×1.0]")
-    print("=" * 60 + "\n")
-
+    print(f"MPO  model={MODEL_NAME}  lora={not args.full_finetune}  out={args.output_dir}")
     trainer.train()
 
     trainer.save_model(args.output_dir)
     processor.save_pretrained(args.output_dir)
-    print(f"\nModel saved to {args.output_dir}")
+    print(f"saved {args.output_dir}")
 
 
 def parse_args():
