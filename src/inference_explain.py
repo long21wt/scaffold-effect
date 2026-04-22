@@ -1,22 +1,3 @@
-"""
-MDD inference pipeline with contrastive explanation support for Qwen2.5-VL and Ministral.
-Runs classification across train/dev/test splits and optionally produces contrastive outputs.
-
-Modes:
-  - tabular:              text data only (baseline)
-  - tabular_mri_preamble: text + MRI preamble string (ablation, no actual MRI images)
-  - tabular_parcel_mri:   text + parcel text + MRI images (full multimodal)
-
-Usage:
-    python inference_explain.py \
-        --txt_mdd_base_path /path/to/txt_mdd_split \
-        --model_name        Qwen/Qwen2.5-VL-3B-Instruct \
-        --mode              tabular_parcel_mri \
-        --mri_mdd_base_path /path/to/mri_mdd \
-        --output_dir        ./results \
-        --run_contrastive
-"""
-
 import argparse
 import base64
 import io

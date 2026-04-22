@@ -1,20 +1,3 @@
-"""
-Fine-tunes Qwen/Qwen2.5-VL-3B-Instruct on the OASIS DPO dataset using Mixed Preference Optimization (MPO)
-
-TRL's DPOTrainer with any explicit max_length will truncate sequences mid-image,
-cutting some <|image_pad|> tokens while the pixel_values tensor still expects the
-full count -> "Image features and image tokens do not match: tokens N, features M".
-
-Official TRL fix: set max_length=None so sequences are NEVER truncated.
-See: https://huggingface.co/docs/trl/dpo_trainer#vision-language-models
-
-Usage - single H200
-    python train_dpo.py \
-        --dataset_dir  ./dpo_dataset \
-        --output_dir   ./qwen25vl_oasis_dpo \
-        --run_name     qwen25vl_oasis_mpo
-"""
-
 import argparse
 import os
 
@@ -158,8 +141,8 @@ def main(args):
     print(f"  Dataset    : {args.dataset_dir}")
     print(f"  Output     : {args.output_dir}")
     print(f"  LoRA       : {not args.full_finetune}")
-    print(f"  max_length : None  ← image token mismatch fix")
-    print(f"  Loss       : MPO [sigmoid×0.8 + bco_pair×0.2 + sft×1.0]")
+    print("  max_length : None  ← image token mismatch fix")
+    print("  Loss       : MPO [sigmoid×0.8 + bco_pair×0.2 + sft×1.0]")
     print("=" * 60 + "\n")
 
     trainer.train()

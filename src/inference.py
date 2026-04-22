@@ -1,23 +1,3 @@
-"""
-Modular inference pipeline for patient MDD classification using multimodal data (tabular, parcel, MRI).
-Supports InternVL, Ministral, Gemma, and other HuggingFace VLMs.
-
-Modes:
-  - tabular:           text data only
-  - tabular_parcel:    text + MRI parcel text
-  - tabular_mri:       text + MRI images (no parcel text)
-  - tabular_parcel_mri: text + parcel text + MRI images
-  - parcel_mri:        parcel text + MRI images only
-
-Usage:
-    # e.g., InternVL
-    python inference.py \
-        --txt_path      /path/to/txt \
-        --mri_base_path /path/to/mri \
-        --model_name    OpenGVLab/InternVL3_5-8B \
-        --mode          tabular_parcel_mri
-"""
-
 import argparse
 import base64
 import io
@@ -26,16 +6,14 @@ import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-import numpy as np
 import torch
 import torchvision.transforms as T
 from PIL import Image
 from torchvision.transforms.functional import InterpolationMode
 from tqdm import tqdm
 
-# HuggingFace Imports
 from transformers import (
     AutoModel,
     AutoModelForCausalLM,
@@ -54,8 +32,6 @@ from transformers import (
 
 @dataclass
 class InferenceConfig:
-    """Configuration for inference pipeline"""
-
     txt_path: str
     mri_base_path: Optional[str] = None
     output_file: str = "results.jsonl"
@@ -73,11 +49,8 @@ class InferenceConfig:
 
 
 class DataLoader:
-    """Handles loading of text and MRI data"""
-
     @staticmethod
     def load_text_file(file_path: str) -> str:
-        """Load text file content"""
         with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
 
@@ -85,7 +58,6 @@ class DataLoader:
     def get_mri_content(
         txt_filename: str, mri_base_path: str, include_images: bool = False
     ) -> List[Dict[str, Any]]:
-        """Extract MRI data for a given text filename."""
         patient_id = os.path.splitext(txt_filename)[0]
         sub_folder = f"sub-{int(patient_id):04d}"
         subject_path = os.path.join(mri_base_path, sub_folder)
@@ -124,7 +96,6 @@ class DataLoader:
     def get_mri_images_only(
         txt_filename: str, mri_base_path: str
     ) -> List[Dict[str, Any]]:
-        """Get MRI images only (no text data)"""
         patient_id = os.path.splitext(txt_filename)[0]
         sub_folder = f"sub-{int(patient_id):04d}"
         subject_path = os.path.join(mri_base_path, sub_folder)
@@ -155,7 +126,6 @@ class DataLoader:
 
     @staticmethod
     def get_mri_text_only(txt_filename: str, mri_base_path: str) -> str:
-        """Get MRI data as text only (no images)"""
         content_items = DataLoader.get_mri_content(
             txt_filename, mri_base_path, include_images=False
         )
@@ -164,22 +134,18 @@ class DataLoader:
 
 
 class ModelHandler(ABC):
-    """Abstract base class for model handlers"""
-
     def __init__(self, config: InferenceConfig):
         self.config = config
-        self.model = None
-        self.processor = None
+        self.model: Any = None
+        self.processor: Any = None
         self._load_model()
 
     @abstractmethod
     def _load_model(self):
-        """Load model and processor"""
         pass
 
     @abstractmethod
     def classify(self, text: str, mri_content: Any) -> str:
-        """Classify patient data"""
         pass
 
     def _build_prompt(
@@ -188,18 +154,8 @@ class ModelHandler(ABC):
         mri_data: Optional[str] = None,
         include_patient_data: bool = True,
     ) -> str:
-        """Build classification prompt"""
         prompt_parts = ["You are given patient"]
         if include_patient_data:
-            # prompt_parts.append("clinical information")
-            # prompt_parts.append("clinical information and their MRI data")
-            # prompt_parts.append("clinical information and (brain parcellation volume, visualization of brain regions)")
-            # prompt_parts.append("clinical information and their MRI data (brain parcellation volume, visualization of brain regions)")
-            # prompt_parts.append("clinical information and their CT Scan data")
-            # prompt_parts.append("clinical information and their Magnetic Resonance Imaging data")
-            # prompt_parts.append("clinical information and their Magnetic Resonance Imaging data (brain parcellation volume, visualization of brain regions)")
-            # prompt_parts.append("clinical information and fMRI data")
-            # prompt_parts.append("clinical information and Neuroimaging data is provided.")
             prompt_parts.append("clinical information and The weather is sunny today")
         if mri_data:
             prompt_parts.append(
@@ -207,14 +163,6 @@ class ModelHandler(ABC):
             )
 
         prompt = " ".join(prompt_parts) + ".\n"
-        #        prompt += """Classify the patient into one of the following categories:
-        # - Major Depressive Disorder
-        # - Control (no disorder detected)
-
-        # Don't think, return your answer as a JSON object with one fields:
-        # - "category": the chosen category (exactly one of the two above)
-
-        # """
         prompt += """Classify the patient into one of the following categories:
 - Major Depressive Disorder
 - Control (no disorder detected)
@@ -257,7 +205,6 @@ class InternVLHandler(ModelHandler):
             self.config.model_name, trust_remote_code=True, use_fast=False
         )
 
-    # --- InternVL Helper Methods ---
     @staticmethod
     def build_transform(input_size):
         MEAN, STD = InternVLHandler.IMAGENET_MEAN, InternVLHandler.IMAGENET_STD
@@ -380,45 +327,6 @@ class InternVLHandler(ModelHandler):
             max_new_tokens=self.config.max_new_tokens, do_sample=self.config.do_sample
         )
 
-        # Get the original pixel_values
-        # original_pixel_values = pixel_values
-
-        # Check the statistics of the original values
-        # original_min = original_pixel_values.min()
-        # original_max = original_pixel_values.max()
-        # original_mean = original_pixel_values.mean()
-        # original_std = original_pixel_values.std()
-
-        # print("Original pixel_values statistics:")
-        # print(f"  Shape: {original_pixel_values.shape}")
-        # print(f"  Min: {original_min.item():.4f}")
-        # print(f"  Max: {original_max.item():.4f}")
-        # print(f"  Mean: {original_mean.item():.4f}")
-        # print(f"  Std: {original_std.item():.4f}")
-
-        # Generate Gaussian noise matching the original distribution
-        # original_shape = original_pixel_values.shape
-        # device = original_pixel_values.device
-        # dtype = original_pixel_values.dtype
-
-        # Generate Gaussian noise with matching statistics
-        # gaussian_noise = torch.randn(original_shape, device=device, dtype=dtype) * original_std + original_mean
-        # zeros = torch.zeros(original_shape, device=device, dtype=dtype)
-
-        # Clip the noise to the original range
-        # gaussian_noise = torch.clamp(gaussian_noise, min=original_min, max=original_max)
-
-        # Verify the new noise statistics
-        # print("\nClipped Gaussian noise statistics:")
-        # print(f"  Min: {gaussian_noise.min().item():.4f}")
-        # print(f"  Max: {gaussian_noise.max().item():.4f}")
-        # print(f"  Mean: {gaussian_noise.mean().item():.4f}")
-        # print(f"  Std: {gaussian_noise.std().item():.4f}")
-
-        # Replace pixel_values with the clipped Gaussian noise
-        # inputs['pixel_values'] = gaussian_noise
-        # pixel_values = zeros
-
         response, _ = self.model.chat(
             self.tokenizer,
             pixel_values,
@@ -458,117 +366,50 @@ class MinistralHandler(ModelHandler):
 
     @staticmethod
     def _image_to_data_url(image):
-        """Convert PIL image to base64 data URL"""
         buffered = io.BytesIO()
-        # Save as PNG to ensure compatibility
         image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
         return f"data:image/png;base64,{img_str}"
 
     def classify(self, text: str, mri_content: Any = None) -> str:
-        # 1. Build the prompt
         prompt_text = self._build_prompt(
             text,
             "multimodal" if isinstance(mri_content, list) else mri_content,
             include_patient_data=bool(text),
         )
 
-        # 2. Construct Messages
-        user_content_list = []
-        user_content_list.append({"type": "text", "text": prompt_text})
-
+        user_content_list = [{"type": "text", "text": prompt_text}]
         if isinstance(mri_content, list):
             for item in mri_content:
                 if item["type"] == "text":
                     user_content_list.append({"type": "text", "text": item["text"]})
                 elif item["type"] == "image":
-                    # FIX: Convert local PIL image to Data URI and use 'image_url' schema
-                    # This satisfies strict schema validation in MistralCommonBackend
+                    # MistralCommonBackend requires image_url with data URI, not raw PIL
                     data_url = self._image_to_data_url(item["image"])
                     user_content_list.append(
                         {"type": "image_url", "image_url": {"url": data_url}}
                     )
 
-        messages = [
-            {
-                "role": "user",
-                "content": user_content_list,
-            },
-        ]
-
-        # 3. Tokenize / Process
-        # MistralCommonBackend processes the base64 images into pixel_values here
+        messages = [{"role": "user", "content": user_content_list}]
         tokenized = self.processor.apply_chat_template(
             messages, return_tensors="pt", return_dict=True
         )
 
-        # 4. Move inputs to device
-        # Loop through all keys (input_ids, pixel_values, attention_mask) and move to GPU
         for k, v in tokenized.items():
             if isinstance(v, torch.Tensor):
                 tokenized[k] = v.to(self.model.device)
 
-        # Ensure pixel_values are bfloat16
         if "pixel_values" in tokenized:
             tokenized["pixel_values"] = tokenized["pixel_values"].to(
                 dtype=torch.bfloat16, device=self.model.device
             )
 
-        # 5. Extract image sizes
-        # The model requires image_sizes arg.
-        # MistralCommonBackend usually normalizes images, so we extract dimensions from the tensor.
+        # image_sizes must match pixel_values spatial dims; model uses this to unpad tiles
         image_sizes = None
         if "pixel_values" in tokenized:
-            # pixel_values shape: (Batch, Channels, Height, Width) or (Batch, num_patches, ...)
-            # We need a list of (H, W) tuples.
-            # Depending on the backend processing, pixel_values might be 4D or 5D.
-            # We take the spatial dims from the last two dimensions.
             h, w = tokenized["pixel_values"].shape[-2:]
-            num_images = tokenized["pixel_values"].shape[0]
-            image_sizes = [(h, w) for _ in range(num_images)]
+            image_sizes = [(h, w)] * tokenized["pixel_values"].shape[0]
 
-        # Get the original pixel_values
-        # original_pixel_values = tokenized['pixel_values']
-
-        # Check the statistics of the original values
-        # original_min = original_pixel_values.min()
-        # original_max = original_pixel_values.max()
-        # original_mean = original_pixel_values.mean()
-        # original_std = original_pixel_values.std()
-
-        # print("Original pixel_values statistics:")
-        # print(f"  Shape: {original_pixel_values.shape}")
-        # print(f"  Min: {original_min.item():.4f}")
-        # print(f"  Max: {original_max.item():.4f}")
-        # print(f"  Mean: {original_mean.item():.4f}")
-        # print(f"  Std: {original_std.item():.4f}")
-
-        # Generate Gaussian noise matching the original distribution
-        # original_shape = original_pixel_values.shape
-        # device = original_pixel_values.device
-        # dtype = original_pixel_values.dtype
-
-        # Generate Gaussian noise with matching statistics
-        # gaussian_noise = torch.randn(original_shape, device=device, dtype=dtype) * original_std + original_mean
-        # zeros = torch.zeros(original_shape, device=device, dtype=dtype)
-
-        # Clip the noise to the original range
-        # gaussian_noise = torch.clamp(gaussian_noise, min=original_min, max=original_max)
-
-        # Verify the new noise statistics
-        # print("\nClipped Gaussian noise statistics:")
-        # print(f"  Min: {gaussian_noise.min().item():.4f}")
-        # print(f"  Max: {gaussian_noise.max().item():.4f}")
-        # print(f"  Mean: {gaussian_noise.mean().item():.4f}")
-        # print(f"  Std: {gaussian_noise.std().item():.4f}")
-
-        # Replace pixel_values with the clipped Gaussian noise
-        # inputs['pixel_values'] = gaussian_noise
-        # tokenized['pixel_values'] = zeros
-
-        # print("\nPixel values replaced with clipped Gaussian noise!")
-
-        # 6. Generate
         with torch.inference_mode():
             output = self.model.generate(
                 **tokenized,
@@ -577,9 +418,7 @@ class MinistralHandler(ModelHandler):
                 do_sample=self.config.do_sample,
             )[0]
 
-        # 7. Decode
-        decoded_output = self.processor.decode(output[len(tokenized["input_ids"][0]) :])
-        return decoded_output.strip()
+        return self.processor.decode(output[len(tokenized["input_ids"][0]) :]).strip()
 
 
 class PixtralHandler(ModelHandler):
@@ -732,7 +571,81 @@ class GemmaHandler(ModelHandler):
         return self.processor.decode(generation, skip_special_tokens=True).strip()
 
 
-class Qwen2VLHandler(ModelHandler):
+_SYSTEM_MSG = {
+    "role": "system",
+    "content": [
+        {
+            "type": "text",
+            "text": "You are a helpful medical assistant in clinical psychiatry.",
+        }
+    ],
+}
+
+
+class _QwenVLUtilsBase(ModelHandler):
+    """Shared logic for Qwen2-VL and Qwen2.5-VL (vision processed via qwen_vl_utils)."""
+
+    process_vision_info: Any = None
+
+    def classify(self, text: str, mri_content: Any = None) -> str:
+        if isinstance(mri_content, list):
+            return self._classify_with_multimodal(text, mri_content)
+        elif isinstance(mri_content, str):
+            return self._classify_with_text_only(text, mri_content)
+        return self._classify_text_only(text)
+
+    def _classify_text_only(self, text: str) -> str:
+        prompt = self._build_prompt(text)
+        return self._generate(
+            [
+                _SYSTEM_MSG,
+                {"role": "user", "content": [{"type": "text", "text": prompt}]},
+            ]
+        )
+
+    def _classify_with_text_only(self, text: str, mri_data: str) -> str:
+        prompt = self._build_prompt(text, mri_data)
+        return self._generate(
+            [
+                _SYSTEM_MSG,
+                {"role": "user", "content": [{"type": "text", "text": prompt}]},
+            ]
+        )
+
+    def _classify_with_multimodal(
+        self, text: str, mri_content_items: List[Dict]
+    ) -> str:
+        prompt_text = self._build_prompt(
+            text, "multimodal", include_patient_data=bool(text)
+        )
+        user_content = [{"type": "text", "text": prompt_text}] + list(mri_content_items)
+        return self._generate([_SYSTEM_MSG, {"role": "user", "content": user_content}])
+
+    def _generate(self, messages: List[Dict]) -> str:
+        text = self.processor.apply_chat_template(
+            messages, add_generation_prompt=True, tokenize=False
+        )
+        image_inputs, video_inputs = self.process_vision_info(messages)  # pylint: disable=not-callable
+        inputs = self.processor(  # pylint: disable=not-callable
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        ).to(self.model.device, dtype=torch.bfloat16)
+        input_len = inputs["input_ids"].shape[-1]
+        with torch.inference_mode():
+            generation = self.model.generate(
+                **inputs,
+                max_new_tokens=self.config.max_new_tokens,
+                do_sample=self.config.do_sample,
+            )
+        return self.processor.decode(
+            generation[0][input_len:], skip_special_tokens=True
+        ).strip()
+
+
+class Qwen2VLHandler(_QwenVLUtilsBase):
     """Handler for Qwen 2 VL models"""
 
     def _load_model(self):
@@ -747,94 +660,8 @@ class Qwen2VLHandler(ModelHandler):
         )
         self.processor = AutoProcessor.from_pretrained(self.config.model_name)
 
-    def classify(self, text: str, mri_content: Any = None) -> str:
-        if isinstance(mri_content, list):
-            return self._classify_with_multimodal(text, mri_content)
-        elif isinstance(mri_content, str):
-            return self._classify_with_text_only(text, mri_content)
-        else:
-            return self._classify_text_only(text)
 
-    def _classify_text_only(self, text: str) -> str:
-        prompt = self._build_prompt(text)
-        messages = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
-                    }
-                ],
-            },
-            {"role": "user", "content": [{"type": "text", "text": prompt}]},
-        ]
-        return self._generate(messages)
-
-    def _classify_with_text_only(self, text: str, mri_data: str) -> str:
-        prompt = self._build_prompt(text, mri_data)
-        messages = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
-                    }
-                ],
-            },
-            {"role": "user", "content": [{"type": "text", "text": prompt}]},
-        ]
-        return self._generate(messages)
-
-    def _classify_with_multimodal(
-        self, text: str, mri_content_items: List[Dict]
-    ) -> str:
-        prompt_text = self._build_prompt(
-            text, "multimodal", include_patient_data=bool(text)
-        )
-        user_content = [{"type": "text", "text": prompt_text}]
-        user_content.extend(mri_content_items)
-        messages = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
-                    }
-                ],
-            },
-            {"role": "user", "content": user_content},
-        ]
-        return self._generate(messages)
-
-    def _generate(self, messages: List[Dict]) -> str:
-        text = self.processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=False,
-        )
-        image_inputs, video_inputs = self.process_vision_info(messages)
-        inputs = self.processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        ).to(self.model.device, dtype=torch.bfloat16)
-        input_len = inputs["input_ids"].shape[-1]
-        with torch.inference_mode():
-            generation = self.model.generate(
-                **inputs,
-                max_new_tokens=self.config.max_new_tokens,
-                do_sample=self.config.do_sample,
-            )
-        generation = generation[0][input_len:]
-        return self.processor.decode(generation, skip_special_tokens=True).strip()
-
-
-class Qwen2_5VLHandler(ModelHandler):
+class Qwen2_5VLHandler(_QwenVLUtilsBase):
     """Handler for Qwen 2.5 VL models"""
 
     def _load_model(self):
@@ -848,94 +675,6 @@ class Qwen2_5VLHandler(ModelHandler):
             attn_implementation="flash_attention_2",
         )
         self.processor = AutoProcessor.from_pretrained(self.config.model_name)
-
-    def classify(self, text: str, mri_content: Any = None) -> str:
-        if isinstance(mri_content, list):
-            return self._classify_with_multimodal(text, mri_content)
-        elif isinstance(mri_content, str):
-            return self._classify_with_text_only(text, mri_content)
-        else:
-            return self._classify_text_only(text)
-
-    def _classify_text_only(self, text: str) -> str:
-        prompt = self._build_prompt(text)
-        messages = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
-                    }
-                ],
-            },
-            {"role": "user", "content": [{"type": "text", "text": prompt}]},
-        ]
-        return self._generate(messages)
-
-    def _classify_with_text_only(self, text: str, mri_data: str) -> str:
-        prompt = self._build_prompt(text, mri_data)
-        messages = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
-                    }
-                ],
-            },
-            {"role": "user", "content": [{"type": "text", "text": prompt}]},
-        ]
-        return self._generate(messages)
-
-    def _classify_with_multimodal(
-        self, text: str, mri_content_items: List[Dict]
-    ) -> str:
-        prompt_text = self._build_prompt(
-            text, "multimodal", include_patient_data=bool(text)
-        )
-        user_content = [{"type": "text", "text": prompt_text}]
-        user_content.extend(mri_content_items)
-        messages = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
-                    }
-                ],
-            },
-            {"role": "user", "content": user_content},
-        ]
-        return self._generate(messages)
-
-    def _generate(self, messages: List[Dict]) -> str:
-        text = self.processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=False,
-        )
-
-        image_inputs, video_inputs = self.process_vision_info(messages)
-        inputs = self.processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        ).to(self.model.device, dtype=torch.bfloat16)
-
-        input_len = inputs["input_ids"].shape[-1]
-        with torch.inference_mode():
-            generation = self.model.generate(
-                **inputs,
-                max_new_tokens=self.config.max_new_tokens,
-                do_sample=self.config.do_sample,
-            )
-        generation = generation[0][input_len:]
-        return self.processor.decode(generation, skip_special_tokens=True).strip()
 
 
 class Qwen2_5Handler(ModelHandler):
@@ -1025,7 +764,64 @@ class Qwen2_5Handler(ModelHandler):
         return self.processor.decode(generation, skip_special_tokens=True).strip()
 
 
-class Qwen3VLHandler(ModelHandler):
+class _QwenVLDirectBase(ModelHandler):
+    """Shared logic for Qwen3-VL and Qwen3-VL-MoE (apply_chat_template with tokenize=True)."""
+
+    def classify(self, text: str, mri_content: Any = None) -> str:
+        if isinstance(mri_content, list):
+            return self._classify_with_multimodal(text, mri_content)
+        elif isinstance(mri_content, str):
+            return self._classify_with_text_only(text, mri_content)
+        return self._classify_text_only(text)
+
+    def _classify_text_only(self, text: str) -> str:
+        prompt = self._build_prompt(text)
+        return self._generate(
+            [
+                _SYSTEM_MSG,
+                {"role": "user", "content": [{"type": "text", "text": prompt}]},
+            ]
+        )
+
+    def _classify_with_text_only(self, text: str, mri_data: str) -> str:
+        prompt = self._build_prompt(text, mri_data)
+        return self._generate(
+            [
+                _SYSTEM_MSG,
+                {"role": "user", "content": [{"type": "text", "text": prompt}]},
+            ]
+        )
+
+    def _classify_with_multimodal(
+        self, text: str, mri_content_items: List[Dict]
+    ) -> str:
+        prompt_text = self._build_prompt(
+            text, "multimodal", include_patient_data=bool(text)
+        )
+        user_content = [{"type": "text", "text": prompt_text}] + list(mri_content_items)
+        return self._generate([_SYSTEM_MSG, {"role": "user", "content": user_content}])
+
+    def _generate(self, messages: List[Dict]) -> str:
+        inputs = self.processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        ).to(self.model.device, dtype=torch.bfloat16)
+        input_len = inputs["input_ids"].shape[-1]
+        with torch.inference_mode():
+            generation = self.model.generate(
+                **inputs,
+                max_new_tokens=self.config.max_new_tokens,
+                do_sample=self.config.do_sample,
+            )
+        return self.processor.decode(
+            generation[0][input_len:], skip_special_tokens=True
+        ).strip()
+
+
+class Qwen3VLHandler(_QwenVLDirectBase):
     """Handler for Qwen 3 VL models"""
 
     def _load_model(self):
@@ -1037,88 +833,8 @@ class Qwen3VLHandler(ModelHandler):
         )
         self.processor = AutoProcessor.from_pretrained(self.config.model_name)
 
-    def classify(self, text: str, mri_content: Any = None) -> str:
-        if isinstance(mri_content, list):
-            return self._classify_with_multimodal(text, mri_content)
-        elif isinstance(mri_content, str):
-            return self._classify_with_text_only(text, mri_content)
-        else:
-            return self._classify_text_only(text)
 
-    def _classify_text_only(self, text: str) -> str:
-        prompt = self._build_prompt(text)
-        messages = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
-                    }
-                ],
-            },
-            {"role": "user", "content": [{"type": "text", "text": prompt}]},
-        ]
-        return self._generate(messages)
-
-    def _classify_with_text_only(self, text: str, mri_data: str) -> str:
-        prompt = self._build_prompt(text, mri_data)
-        messages = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
-                    }
-                ],
-            },
-            {"role": "user", "content": [{"type": "text", "text": prompt}]},
-        ]
-        return self._generate(messages)
-
-    def _classify_with_multimodal(
-        self, text: str, mri_content_items: List[Dict]
-    ) -> str:
-        prompt_text = self._build_prompt(
-            text, "multimodal", include_patient_data=bool(text)
-        )
-        user_content = [{"type": "text", "text": prompt_text}]
-        user_content.extend(mri_content_items)
-        messages = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
-                    }
-                ],
-            },
-            {"role": "user", "content": user_content},
-        ]
-        return self._generate(messages)
-
-    def _generate(self, messages: List[Dict]) -> str:
-        inputs = self.processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(self.model.device, dtype=torch.bfloat16)
-        input_len = inputs["input_ids"].shape[-1]
-        with torch.inference_mode():
-            generation = self.model.generate(
-                **inputs,
-                max_new_tokens=self.config.max_new_tokens,
-                do_sample=self.config.do_sample,
-            )
-        generation = generation[0][input_len:]
-        return self.processor.decode(generation, skip_special_tokens=True).strip()
-
-
-class Qwen3VLMoeHandler(ModelHandler):
+class Qwen3VLMoeHandler(_QwenVLDirectBase):
     """Handler for Qwen 3 VL MoE models"""
 
     def _load_model(self):
@@ -1129,86 +845,6 @@ class Qwen3VLMoeHandler(ModelHandler):
             attn_implementation="flash_attention_2",
         )
         self.processor = AutoProcessor.from_pretrained(self.config.model_name)
-
-    def classify(self, text: str, mri_content: Any = None) -> str:
-        if isinstance(mri_content, list):
-            return self._classify_with_multimodal(text, mri_content)
-        elif isinstance(mri_content, str):
-            return self._classify_with_text_only(text, mri_content)
-        else:
-            return self._classify_text_only(text)
-
-    def _classify_text_only(self, text: str) -> str:
-        prompt = self._build_prompt(text)
-        messages = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
-                    }
-                ],
-            },
-            {"role": "user", "content": [{"type": "text", "text": prompt}]},
-        ]
-        return self._generate(messages)
-
-    def _classify_with_text_only(self, text: str, mri_data: str) -> str:
-        prompt = self._build_prompt(text, mri_data)
-        messages = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
-                    }
-                ],
-            },
-            {"role": "user", "content": [{"type": "text", "text": prompt}]},
-        ]
-        return self._generate(messages)
-
-    def _classify_with_multimodal(
-        self, text: str, mri_content_items: List[Dict]
-    ) -> str:
-        prompt_text = self._build_prompt(
-            text, "multimodal", include_patient_data=bool(text)
-        )
-        user_content = [{"type": "text", "text": prompt_text}]
-        user_content.extend(mri_content_items)
-        messages = [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
-                    }
-                ],
-            },
-            {"role": "user", "content": user_content},
-        ]
-        return self._generate(messages)
-
-    def _generate(self, messages: List[Dict]) -> str:
-        inputs = self.processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(self.model.device, dtype=torch.bfloat16)
-        input_len = inputs["input_ids"].shape[-1]
-        with torch.inference_mode():
-            generation = self.model.generate(
-                **inputs,
-                max_new_tokens=self.config.max_new_tokens,
-                do_sample=self.config.do_sample,
-            )
-        generation = generation[0][input_len:]
-        return self.processor.decode(generation, skip_special_tokens=True).strip()
 
 
 class LlavaOneVisionHandler(ModelHandler):
@@ -1372,11 +1008,8 @@ class Glm4vHandler(ModelHandler):
 
 
 class ModelFactory:
-    """Factory for creating model handlers"""
-
     @staticmethod
     def create_handler(config: InferenceConfig) -> ModelHandler:
-        """Create appropriate model handler based on model name"""
         model_name = config.model_name.lower()
 
         if "internvl" in model_name:
@@ -1409,21 +1042,13 @@ class ModelFactory:
             raise ValueError(f"Unsupported model: {config.model_name}")
 
 
-# --------------------
-# Inference Pipeline
-# --------------------
-
-
 class InferencePipeline:
-    """Main inference pipeline"""
-
     def __init__(self, config: InferenceConfig):
         self.config = config
         self.handler = ModelFactory.create_handler(config)
         self.data_loader = DataLoader()
 
     def _get_mri_paths(self, txt_filename: str) -> Dict[str, Any]:
-        """Get all MRI file paths for a patient"""
         if not self.config.mri_base_path:
             return None
 
@@ -1453,12 +1078,6 @@ class InferencePipeline:
         return mri_paths
 
     def run(self, mode: str = "tabular"):
-        """
-        Run inference pipeline
-        Args:
-            mode: One of 'tabular', 'tabular_parcel', 'tabular_mri',
-                  'tabular_parcel_mri', 'parcel_mri'
-        """
         with open(self.config.output_file, "w", encoding="utf-8") as out_f:
             for filename in tqdm(os.listdir(self.config.txt_path)):
                 if not filename.lower().endswith(".txt"):
@@ -1473,10 +1092,8 @@ class InferencePipeline:
                 mri_paths = None
 
                 if mode == "tabular":
-                    # Text data only
                     category = self.handler.classify(patient_data, None)
                 elif mode == "tabular_parcel":
-                    # Text data + MRI text data
                     if self.config.mri_base_path:
                         mri_content = self.data_loader.get_mri_text_only(
                             filename, self.config.mri_base_path
@@ -1485,7 +1102,6 @@ class InferencePipeline:
                         mri_paths = self._get_mri_paths(filename)
                     category = self.handler.classify(patient_data, mri_content)
                 elif mode == "tabular_mri":
-                    # Text data + MRI images only (no parcellation text)
                     if self.config.mri_base_path:
                         mri_content = self.data_loader.get_mri_images_only(
                             filename, self.config.mri_base_path
@@ -1494,7 +1110,6 @@ class InferencePipeline:
                         mri_paths = self._get_mri_paths(filename)
                     category = self.handler.classify(patient_data, mri_content)
                 elif mode == "tabular_parcel_mri":
-                    # Text data + MRI text + MRI images
                     if self.config.mri_base_path:
                         mri_content = self.data_loader.get_mri_content(
                             filename, self.config.mri_base_path, include_images=True
@@ -1503,7 +1118,6 @@ class InferencePipeline:
                         mri_paths = self._get_mri_paths(filename)
                     category = self.handler.classify(patient_data, mri_content)
                 elif mode == "parcel_mri":
-                    # MRI data only (text + images)
                     if self.config.mri_base_path:
                         mri_content = self.data_loader.get_mri_content(
                             filename, self.config.mri_base_path, include_images=True
@@ -1514,7 +1128,6 @@ class InferencePipeline:
                 else:
                     raise ValueError(f"Unknown mode: {mode}")
 
-                # Save result with full paths
                 record = {
                     "filename": filename,
                     "full_path": file_path,
@@ -1533,7 +1146,6 @@ class InferencePipeline:
                     print(f"  MRI: {mri_paths['subject_folder']}")
 
     def _summarize_mri_content(self, mri_content: List[Dict]) -> str:
-        """Summarize MRI content for JSON serialization"""
         summary_parts = []
         for item in mri_content:
             if item["type"] == "text":
@@ -1544,7 +1156,6 @@ class InferencePipeline:
 
 
 def parse_args():
-    """Parse command line arguments"""
     parser = argparse.ArgumentParser(
         description="Modular inference pipeline for patient classification using multimodal data",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1621,8 +1232,6 @@ Examples:
 
 
 def validate_args(args):
-    """Validate command line arguments"""
-    # Check if MRI path is required but not provided
     if args.mode in [
         "tabular_parcel",
         "tabular_mri",
@@ -1634,13 +1243,11 @@ def validate_args(args):
                 f"Mode '{args.mode}' requires --mri_base_path to be specified"
             )
 
-    # Check if paths exist
     if not os.path.exists(args.txt_path):
         raise FileNotFoundError(f"Text path does not exist: {args.txt_path}")
     if args.mri_base_path and not os.path.exists(args.mri_base_path):
         raise FileNotFoundError(f"MRI base path does not exist: {args.mri_base_path}")
 
-    # Generate output file name if not provided
     if not args.output_file:
         model_basename = args.model_name.split("/")[-1].replace("-", "_")
         mri_basename = (
