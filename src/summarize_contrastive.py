@@ -1,10 +1,13 @@
-import os
-import json
 import argparse
-import pandas as pd
-import matplotlib.pyplot as plt
+import json
+import logging
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import pandas as pd
 from scipy import stats
+
+logger = logging.getLogger(__name__)
 
 plt.style.use(["science", "grid", "vibrant"])
 plt.figure(dpi=300)
@@ -27,11 +30,9 @@ plt.rcParams.update(
 
 def load_jsonl(path: str) -> pd.DataFrame:
     records = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                records.append(json.loads(line))
+    for line in Path(path).read_text().splitlines():
+        if line.strip():
+            records.append(json.loads(line))
     rows = []
     for r in records:
         rows.append(
@@ -137,23 +138,23 @@ def build_three_way(df_preamble: pd.DataFrame, df_full: pd.DataFrame) -> pd.Data
 def summarize_three_way(df: pd.DataFrame, split: str) -> dict:
     n = len(df)
 
-    def pct(mask):
+    def pct(mask: pd.Series) -> float:
         return 100 * mask.sum() / n if n else 0.0
 
-    def m(col):
+    def m(col: str) -> float:
         return df[col].mean()
 
-    def s(col):
+    def s(col: str) -> float:
         return df[col].std()
 
-    def wilcoxon(a, b):
+    def wilcoxon(a: pd.Series, b: pd.Series) -> tuple[float, float]:
         diff = a - b
         if (diff == 0).all():
             return float("nan"), float("nan")
         try:
             stat, p = stats.wilcoxon(diff.dropna(), alternative="greater")
             return float(stat), float(p)
-        except Exception:
+        except ValueError:
             return float("nan"), float("nan")
 
     w_pre_stat, w_pre_p = wilcoxon(df["p_mdd_preamble"], df["p_mdd_baseline"])
@@ -187,38 +188,42 @@ def summarize_three_way(df: pd.DataFrame, split: str) -> dict:
     }
 
 
-def print_summary(s: dict):
-    print(f"\n{'=' * 60}")
-    print(f"Split: {s['split'].upper()}   (n={s['n_total']})")
-    print(f"{'=' * 60}")
-    print(
-        f"  Accuracy  | baseline: {s['acc_baseline']:.1f}%  "
-        f"preamble: {s['acc_preamble']:.1f}%  "
-        f"full: {s['acc_full']:.1f}%"
+def print_summary(s: dict) -> None:
+    logger.info("\n%s (n=%d)", s["split"].upper(), s["n_total"])
+    logger.info(
+        "accuracy: baseline=%.1f%% preamble=%.1f%% full=%.1f%%",
+        s["acc_baseline"], s["acc_preamble"], s["acc_full"],
     )
-    print(
-        f"  P(MDD)    | baseline: {s['mean_p_mdd_baseline']:.3f}+-{s['std_p_mdd_baseline']:.3f}  "
-        f"preamble: {s['mean_p_mdd_preamble']:.3f}+-{s['std_p_mdd_preamble']:.3f}  "
-        f"full: {s['mean_p_mdd_full']:.3f}+-{s['std_p_mdd_full']:.3f}"
+    logger.info(
+        "P(MDD): baseline=%.3f+-%.3f preamble=%.3f+-%.3f full=%.3f+-%.3f",
+        s["mean_p_mdd_baseline"], s["std_p_mdd_baseline"],
+        s["mean_p_mdd_preamble"], s["std_p_mdd_preamble"],
+        s["mean_p_mdd_full"], s["std_p_mdd_full"],
     )
-    print(
-        f"  Delta vs base | preamble: {s['mean_delta_preamble']:+.3f}+-{s['std_delta_preamble']:.3f}  "
-        f"full: {s['mean_delta_full']:+.3f}+-{s['std_delta_full']:.3f}"
+    logger.info(
+        "delta vs base: preamble=%+.3f+-%.3f full=%+.3f+-%.3f",
+        s["mean_delta_preamble"], s["std_delta_preamble"],
+        s["mean_delta_full"], s["std_delta_full"],
     )
-    print(
-        f"  Delta full vs preamble: {s['mean_delta_full_vs_pre']:+.3f}+-{s['std_delta_full_vs_pre']:.3f}"
+    logger.info(
+        "delta full vs preamble: %+.3f+-%.3f",
+        s["mean_delta_full_vs_pre"],
+        s["std_delta_full_vs_pre"],
     )
-    print(
-        f"  Wilcoxon (preamble > base): W={s['wilcoxon_preamble_vs_base_stat']:.1f}  "
-        f"p={s['wilcoxon_preamble_vs_base_p']:.4f}"
+    logger.info(
+        "wilcoxon preamble>base: W=%.1f p=%.4f",
+        s["wilcoxon_preamble_vs_base_stat"],
+        s["wilcoxon_preamble_vs_base_p"],
     )
-    print(
-        f"  Wilcoxon (full > base):     W={s['wilcoxon_full_vs_base_stat']:.1f}  "
-        f"p={s['wilcoxon_full_vs_base_p']:.4f}"
+    logger.info(
+        "wilcoxon full>base: W=%.1f p=%.4f",
+        s["wilcoxon_full_vs_base_stat"],
+        s["wilcoxon_full_vs_base_p"],
     )
-    print(
-        f"  Wilcoxon (full > preamble): W={s['wilcoxon_full_vs_preamble_stat']:.1f}  "
-        f"p={s['wilcoxon_full_vs_preamble_p']:.4f}"
+    logger.info(
+        "wilcoxon full>preamble: W=%.1f p=%.4f",
+        s["wilcoxon_full_vs_preamble_stat"],
+        s["wilcoxon_full_vs_preamble_p"],
     )
 
 
@@ -235,14 +240,16 @@ COND_COLORS = ["#2196F3", "#FF9800", "#9C27B0"]
 COND_KEYS = ["p_mdd_baseline", "p_mdd_preamble", "p_mdd_full"]
 
 
-def plot_three_way_paired(df: pd.DataFrame, output_dir: str, model_name: str = ""):
+def plot_three_way_paired(
+    df: pd.DataFrame, output_dir: str, model_name: str = ""
+) -> None:
     """
     Figure 1: Group mean P(MDD) across three conditions with ±1 SD shading.
     """
     n = len(df)
-    print(f"\n[Figure] P(MDD) across three conditions (n={n})")
+    logger.info("P(MDD) across three conditions (n=%d)", n)
 
-    fig, ax = plt.subplots(figsize=(8, 4.5))
+    _fig, ax = plt.subplots(figsize=(8, 4.5))
 
     xs = [0, 1, 2]
     means = [df[k].mean() for k in COND_KEYS]
@@ -251,8 +258,8 @@ def plot_three_way_paired(df: pd.DataFrame, output_dir: str, model_name: str = "
     # std shading
     ax.fill_between(
         xs,
-        [m - s for m, s in zip(means, stds)],
-        [m + s for m, s in zip(means, stds)],
+        [m - s for m, s in zip(means, stds, strict=False)],
+        [m + s for m, s in zip(means, stds, strict=False)],
         color="black",
         alpha=0.12,
         label=r"$\pm 1$ SD",
@@ -308,25 +315,23 @@ def plot_three_way_paired(df: pd.DataFrame, output_dir: str, model_name: str = "
         else "fig1_three_way_paired.pdf"
     )
     plt.savefig(
-        os.path.join(output_dir, fname), dpi=300, bbox_inches="tight", pad_inches=0.02
+        Path(output_dir) / fname, dpi=300, bbox_inches="tight", pad_inches=0.02
     )
     plt.close()
-    print(f"  Saved: {fname}")
+    logger.info("saved %s", fname)
 
 
-def save_summary_csv(summaries: list, output_dir: str, model_name: str = ""):
+def save_summary_csv(summaries: list, output_dir: str, model_name: str = "") -> None:
     df = pd.DataFrame(summaries)
-    out = os.path.join(
-        output_dir,
-        f"summary_three_way_{model_name}.csv"
-        if model_name
-        else "summary_three_way.csv",
+    fname = (
+        f"summary_three_way_{model_name}.csv" if model_name else "summary_three_way.csv"
     )
+    out = Path(output_dir) / fname
     df.to_csv(out, index=False, float_format="%.4f")
-    print(f"Saved CSV: {out}")
+    logger.info("saved CSV: %s", out)
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument(
         "--preamble_files",
@@ -348,19 +353,20 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    import sys
+    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     model_name = infer_model(sorted(args.preamble_files)[0])
-    log_path = os.path.join(args.output_dir, f"summary_three_way_{model_name}.log")
-    log_file = open(log_path, "w")
-    sys.stdout = log_file
+    log_path = Path(args.output_dir) / f"summary_three_way_{model_name}.log"
 
-    print(f"Model          : {model_name}")
-    print(f"Preamble files : {', '.join(sorted(args.preamble_files))}")
-    print(f"Full files     : {', '.join(sorted(args.full_files))}")
-    print(f"Date           : {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(file_handler)
+
+    logger.info("model: %s", model_name)
+    logger.info("preamble: %s", ", ".join(sorted(args.preamble_files)))
+    logger.info("full: %s", ", ".join(sorted(args.full_files)))
+    logger.info("date: %s", pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     df_preamble = load_file_list(args.preamble_files)
     df_full = load_file_list(args.full_files)
@@ -373,7 +379,7 @@ if __name__ == "__main__":
         pre_s = df_preamble[df_preamble["split"] == split]
         ful_s = df_full[df_full["split"] == split]
         if pre_s.empty or ful_s.empty:
-            print(f"\n[WARN] Missing data for split={split}, skipping.")
+            logger.warning("missing data for split=%s, skipping", split)
             continue
         three = build_three_way(pre_s, ful_s)
         three["split"] = split
@@ -389,7 +395,7 @@ if __name__ == "__main__":
     plot_three_way_paired(combined, args.output_dir, model_name)
     save_summary_csv(summaries, args.output_dir, model_name)
 
-    print(f"\nAll outputs saved to: {args.output_dir}")
-    log_file.close()
-    sys.stdout = sys.__stdout__
-    print(f"Log written to: {log_path}")
+    logger.info("all outputs saved to %s", args.output_dir)
+    file_handler.close()
+    logger.removeHandler(file_handler)
+    logger.info("log written to %s", log_path)

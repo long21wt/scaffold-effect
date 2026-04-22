@@ -2,10 +2,11 @@ import argparse
 import base64
 import io
 import json
-import os
+import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -19,18 +20,20 @@ from transformers import (
     set_seed,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class InferenceConfig:
     txt_mdd_path: str  # e.g. .../txt_mdd_split/train
-    mri_mdd_path: Optional[str] = None  # e.g. .../mri_mdd_split/train
+    mri_mdd_path: str | None = None  # e.g. .../mri_mdd_split/train
     output_file: str = "results.jsonl"
     model_name: str = "Qwen/Qwen2.5-VL-3B-Instruct"
     max_new_tokens: int = 4096
     do_sample: bool = False
-    categories: List[str] = None
+    categories: list[str] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.categories is None:
             self.categories = [
                 "Major Depressive Disorder",
@@ -38,7 +41,7 @@ class InferenceConfig:
             ]
 
 
-def find_category_token_idx(generated_tokens: List[str]) -> Optional[int]:
+def find_category_token_idx(generated_tokens: list[str]) -> int | None:
     """
     Robustly find the index of the label token ('Major' or 'Control')
     that is the value of the 'category' JSON key.
@@ -64,7 +67,7 @@ def find_category_token_idx(generated_tokens: List[str]) -> Optional[int]:
 
 
 def get_label_sequence_prob(
-    scores: Tuple, token_start_idx: int, label_token_ids: List[int]
+    scores: tuple, token_start_idx: int, label_token_ids: list[int]
 ) -> float:
     """
     Length-normalised sequence probability:
@@ -84,11 +87,11 @@ def get_label_sequence_prob(
 
 
 def compute_binary_probs(
-    scores: Tuple,
+    scores: tuple,
     category_token_idx: int,
-    mdd_token_ids: List[int],
-    control_token_ids: List[int],
-) -> Dict[str, float]:
+    mdd_token_ids: list[int],
+    control_token_ids: list[int],
+) -> dict[str, float]:
     """
     Returns normalised P(MDD) and P(Control) plus the first-token
     decision margin (the actual fork point between the two labels).
@@ -115,40 +118,36 @@ def compute_binary_probs(
 
 class DataLoader:
     @staticmethod
-    def load_text_file(path: str) -> str:
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()
+    def load_text_file(path: str | Path) -> str:
+        return Path(path).read_text(encoding="utf-8")
 
     @staticmethod
     def get_mri_content(
         txt_filename: str, mri_base_path: str, include_images: bool = True
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Load MRI text parcellation data and/or brain visualisation images."""
-        patient_id = os.path.splitext(txt_filename)[0]
-        sub_folder = f"sub-{int(patient_id):04d}"
-        subject_path = os.path.join(mri_base_path, sub_folder)
+        sub_folder = f"sub-{int(Path(txt_filename).stem):04d}"
+        subject_path = Path(mri_base_path) / sub_folder
 
-        if not os.path.exists(subject_path):
+        if not subject_path.exists():
             return [{"type": "text", "text": f"No MRI data found for {sub_folder}"}]
 
         items = []
-        for session in sorted(os.listdir(subject_path)):
-            session_path = os.path.join(subject_path, session)
-            if not os.path.isdir(session_path):
+        for session_path in sorted(subject_path.iterdir()):
+            if not session_path.is_dir():
                 continue
-            items.append({"type": "text", "text": f"\n=== {session} ==="})
-            for fname in sorted(os.listdir(session_path)):
-                fpath = os.path.join(session_path, fname)
-                if fname.endswith(".txt"):
+            items.append({"type": "text", "text": f"\n=== {session_path.name} ==="})
+            for fp in sorted(session_path.iterdir()):
+                if fp.suffix == ".txt":
                     items.append(
                         {
                             "type": "text",
-                            "text": f"\n{fname}:\n{DataLoader.load_text_file(fpath)}",
+                            "text": f"\n{fp.name}:\n{DataLoader.load_text_file(fp)}",
                         }
                     )
-                elif fname.endswith(".png") and include_images:
-                    items.append({"type": "image", "image": Image.open(fpath)})
-                    items.append({"type": "text", "text": f"[Image: {fname}]"})
+                elif fp.suffix == ".png" and include_images:
+                    items.append({"type": "image", "image": Image.open(fp)})
+                    items.append({"type": "text", "text": f"[Image: {fp.name}]"})
 
         return items if items else [{"type": "text", "text": "No MRI data found"}]
 
@@ -157,16 +156,16 @@ class MinistralHandler:
     def __init__(self, config: InferenceConfig):
         self.config = config
         try:
-            from transformers import (
+            from transformers import (  # noqa: PLC0415
                 Mistral3ForConditionalGeneration,
                 MistralCommonBackend,
             )
-        except ImportError:
-            raise ImportError(
+        except ImportError as e:
+            raise ImportError(  # noqa: TRY003
                 "MistralCommonBackend not found. Use a newer transformers environment."
-            )
+            ) from e
 
-        print(f"Loading {config.model_name} ...")
+        logger.info(f"Loading {config.model_name} ...")
         self.processor = MistralCommonBackend.from_pretrained(config.model_name)
         self.model = Mistral3ForConditionalGeneration.from_pretrained(
             config.model_name, device_map="auto"
@@ -179,7 +178,7 @@ class MinistralHandler:
             tok = AutoTokenizer.from_pretrained(config.model_name)
         self.tokenizer = tok
 
-        def encode_label(label: str) -> List[int]:
+        def encode_label(label: str) -> list[int]:
             dummy = self.processor.apply_chat_template(
                 [{"role": "user", "content": [{"type": "text", "text": label}]}],
                 return_tensors="pt",
@@ -194,11 +193,11 @@ class MinistralHandler:
 
         self.mdd_token_ids = encode_label("Major Depressive Disorder")
         self.control_token_ids = encode_label("Control")
-        print(
+        logger.info(
             f"[DEBUG] MDD token ids:     {self.mdd_token_ids} "
             f"→ '{self.tokenizer.decode(self.mdd_token_ids)}'"
         )
-        print(
+        logger.info(
             f"[DEBUG] Control token ids: {self.control_token_ids} "
             f"→ '{self.tokenizer.decode(self.control_token_ids)}'"
         )
@@ -228,9 +227,9 @@ Return your answer as a JSON object with two fields:
     def _build_inputs(
         self,
         text: str,
-        mri_content: Optional[List[Dict]],
+        mri_content: list[dict] | None,
         force_mri_preamble: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """Build tokenized inputs for Mistral3.
 
         force_mri_preamble=True uses the MRI preamble even when mri_content is
@@ -271,13 +270,13 @@ Return your answer as a JSON object with two fields:
         return tokenized
 
     @staticmethod
-    def _image_to_data_url(image) -> str:
+    def _image_to_data_url(image: Image.Image) -> str:
         buf = io.BytesIO()
         image.save(buf, format="PNG")
         return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
     @staticmethod
-    def _get_image_sizes(tokenized: Dict) -> Optional[List[Tuple]]:
+    def _get_image_sizes(tokenized: dict) -> list[tuple] | None:
         if "pixel_values" not in tokenized:
             return None
         h, w = tokenized["pixel_values"].shape[-2:]
@@ -287,7 +286,7 @@ Return your answer as a JSON object with two fields:
     def classify(
         self,
         text: str,
-        mri_content: Optional[List[Dict]] = None,
+        mri_content: list[dict] | None = None,
         force_mri_preamble: bool = False,
     ) -> str:
         tokenized = self._build_inputs(text, mri_content, force_mri_preamble)
@@ -307,9 +306,9 @@ Return your answer as a JSON object with two fields:
     def _generate_with_scores(
         self,
         text: str,
-        mri_content: Optional[List[Dict]],
+        mri_content: list[dict] | None,
         force_mri_preamble: bool = False,
-    ) -> Tuple[str, Dict]:
+    ) -> tuple[str, dict]:
         tokenized = self._build_inputs(text, mri_content, force_mri_preamble)
         image_sizes = self._get_image_sizes(tokenized)
         inp_len = tokenized["input_ids"].shape[-1]
@@ -355,14 +354,14 @@ Return your answer as a JSON object with two fields:
     def classify_contrastive(
         self,
         text: str,
-        mri_content: Optional[List[Dict]],
+        mri_content: list[dict] | None,
         mode: str = "tabular_parcel_mri",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Compares two conditions depending on mode:
 
-        tabular_parcel_mri   → baseline (no preamble, no MRI) vs full (preamble + MRI data)
-        tabular_mri_preamble → baseline (no preamble, no MRI) vs full (preamble only, no MRI data)
+        tabular_parcel_mri   → baseline vs full (preamble + MRI data)
+        tabular_mri_preamble → baseline vs full (preamble only, no MRI data)
         """
         if mode == "tabular_mri_preamble":
             variants = [
@@ -377,7 +376,7 @@ Return your answer as a JSON object with two fields:
 
         results = {}
         for variant, data, force_preamble in variants:
-            pred, probs = self._generate_with_scores(text, data, force_preamble)
+            _pred, probs = self._generate_with_scores(text, data, force_preamble)
             results[variant] = probs
 
         results["delta_p_mdd"] = (
@@ -386,10 +385,10 @@ Return your answer as a JSON object with two fields:
         return results
 
 
-class Qwen2_5VLHandler:
+class Qwen2_5VLHandler:  # noqa: N801
     def __init__(self, config: InferenceConfig):
         self.config = config
-        print(f"Loading {config.model_name} ...")
+        logger.info(f"Loading {config.model_name} ...")
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             config.model_name,
             torch_dtype=torch.bfloat16,
@@ -429,9 +428,9 @@ Return your answer as a JSON object with two fields:
     def _build_messages(
         self,
         text: str,
-        mri_content: Optional[List[Dict]],
+        mri_content: list[dict] | None,
         force_mri_preamble: bool = False,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Build the message list for generation.
 
         force_mri_preamble=True uses the MRI preamble even when mri_content is
@@ -451,14 +450,14 @@ Return your answer as a JSON object with two fields:
                 "content": [
                     {
                         "type": "text",
-                        "text": "You are a helpful medical assistant in clinical psychiatry.",
+                        "text": "You are a helpful medical assistant in clinical psychiatry.",  # noqa: E501
                     }
                 ],
             },
             {"role": "user", "content": user_content},
         ]
 
-    def _generate(self, messages: List[Dict]) -> str:
+    def _generate(self, messages: list[dict]) -> str:
         tmpl = self.processor.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False
         )
@@ -476,7 +475,7 @@ Return your answer as a JSON object with two fields:
             )
         return self.processor.decode(gen[0][inp_len:], skip_special_tokens=True).strip()
 
-    def _generate_with_scores(self, messages: List[Dict]) -> Tuple[str, Dict]:
+    def _generate_with_scores(self, messages: list[dict]) -> tuple[str, dict]:
         """Generate with output_scores=True → return (pred_label, prob_dict)."""
         tmpl = self.processor.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False
@@ -524,7 +523,7 @@ Return your answer as a JSON object with two fields:
     def classify(
         self,
         text: str,
-        mri_content: Optional[List[Dict]] = None,
+        mri_content: list[dict] | None = None,
         force_mri_preamble: bool = False,
     ) -> str:
         return self._generate(
@@ -534,14 +533,14 @@ Return your answer as a JSON object with two fields:
     def classify_contrastive(
         self,
         text: str,
-        mri_content: Optional[List[Dict]],
+        mri_content: list[dict] | None,
         mode: str = "tabular_parcel_mri",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Compares two conditions depending on mode:
 
-        tabular_parcel_mri   → baseline (no preamble, no MRI) vs full (preamble + MRI data)
-        tabular_mri_preamble → baseline (no preamble, no MRI) vs full (preamble only, no MRI data)
+        tabular_parcel_mri   → baseline vs full (preamble + MRI data)
+        tabular_mri_preamble → baseline vs full (preamble only, no MRI data)
         """
         if mode == "tabular_mri_preamble":
             variants = [
@@ -557,7 +556,7 @@ Return your answer as a JSON object with two fields:
         results = {}
         for variant, data, force_preamble in variants:
             msgs = self._build_messages(text, data, force_preamble)
-            pred, probs = self._generate_with_scores(msgs)
+            _pred, probs = self._generate_with_scores(msgs)
             results[variant] = probs
 
         results["delta_p_mdd"] = (
@@ -566,18 +565,17 @@ Return your answer as a JSON object with two fields:
         return results
 
 
-def create_handler(config: InferenceConfig):
+def create_handler(config: InferenceConfig) -> "MinistralHandler | Qwen2_5VLHandler":
     """Instantiate the correct handler based on model name."""
     n = config.model_name.lower()
     if "ministral" in n or ("mistral" in n and "2512" in n):
         return MinistralHandler(config)
-    elif "qwen2.5-vl" in n or "qwen2_5_vl" in n:
+    if "qwen2.5-vl" in n or "qwen2_5_vl" in n:
         return Qwen2_5VLHandler(config)
-    else:
-        raise ValueError(
-            f"Unsupported model: {config.model_name}. "
-            "Supported: Qwen2.5-VL, Ministral/Mistral3"
-        )
+    raise ValueError(  # noqa: TRY003
+        f"Unsupported model: {config.model_name}. "
+        "Supported: Qwen2.5-VL, Ministral/Mistral3"
+    )
 
 
 class InferencePipeline:
@@ -586,15 +584,15 @@ class InferencePipeline:
         self.handler = create_handler(config)
         self.data_loader = DataLoader()
 
-    def _iter_patients(self) -> Tuple[str, str]:
+    def _iter_patients(self) -> tuple[str, str]:
         """Iterate over all MDD patients. Yields (filename, txt_filepath)."""
-        for filename in sorted(os.listdir(self.config.txt_mdd_path)):
-            if filename.lower().endswith(".txt"):
-                yield filename, os.path.join(self.config.txt_mdd_path, filename)
+        for fp in sorted(Path(self.config.txt_mdd_path).iterdir()):
+            if fp.suffix.lower() == ".txt":
+                yield fp.name, str(fp)
 
     def _load_patient(
         self, filename: str, txt_filepath: str
-    ) -> Tuple[str, Optional[List[Dict]]]:
+    ) -> tuple[str, list[dict] | None]:
         text = self.data_loader.load_text_file(txt_filepath)
         mri = None
         if self.config.mri_mdd_path:
@@ -603,7 +601,7 @@ class InferencePipeline:
             )
         return text, mri
 
-    def _summarize_mri(self, mri_content: List[Dict]) -> str:
+    def _summarize_mri(self, mri_content: list[dict]) -> str:
         parts = []
         for item in mri_content:
             if item["type"] == "text":
@@ -612,7 +610,7 @@ class InferencePipeline:
                 parts.append("[Image data included]")
         return "\n".join(parts)
 
-    def run(self, mode: str = "tabular"):
+    def run(self, mode: str = "tabular") -> None:
         """
         Modes
         -----
@@ -631,7 +629,7 @@ class InferencePipeline:
         force_preamble = mode == "tabular_mri_preamble"
         use_mri = mode == "tabular_parcel_mri"
 
-        with open(self.config.output_file, "w", encoding="utf-8") as out_f:
+        with Path(self.config.output_file).open("w", encoding="utf-8") as out_f:
             for filename, txt_filepath in tqdm(list(self._iter_patients())):
                 text, mri = self._load_patient(filename, txt_filepath)
                 mri_input = mri if use_mri else None
@@ -648,9 +646,9 @@ class InferencePipeline:
                 if mri and use_mri:
                     record["mri_data_summary"] = self._summarize_mri(mri)
                 out_f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                print(f"[{filename}] → {output[:80]}")
+                logger.info(f"[{filename}] → {output[:80]}")
 
-    def run_contrastive(self, mode: str = "tabular_parcel_mri"):
+    def run_contrastive(self, mode: str = "tabular_parcel_mri") -> None:
         """
         For every true MDD patient, run both conditions and record ALL outcomes.
 
@@ -665,7 +663,7 @@ class InferencePipeline:
           Type_D_both_wrong    — baseline=Ctrl, full=Ctrl  (both wrong)
         """
         out_path = self.config.output_file.replace(".jsonl", "_contrastive.jsonl")
-        print(f"Contrastive results → {out_path}")
+        logger.info(f"Contrastive results → {out_path}")
         n_total = 0
         counts = {
             "Type_A_both_correct": 0,
@@ -674,7 +672,7 @@ class InferencePipeline:
             "Type_D_both_wrong": 0,
         }
 
-        with open(out_path, "w", encoding="utf-8") as out_f:
+        with Path(out_path).open("w", encoding="utf-8") as out_f:
             for filename, txt_filepath in tqdm(list(self._iter_patients())):
                 text, mri = self._load_patient(filename, txt_filepath)
                 contrastive = self.handler.classify_contrastive(text, mri, mode=mode)
@@ -704,25 +702,25 @@ class InferencePipeline:
                     "timestamp": datetime.now().isoformat(),
                 }
                 out_f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                print(
+                logger.info(
                     f"✓ [{filename}] {case_type} | "
                     f"base p_mdd={contrastive['baseline']['p_mdd_norm']:.3e} → "
                     f"full p_mdd={contrastive['full']['p_mdd_norm']:.3e} "
                     f"Δ={contrastive['delta_p_mdd']:+.3e}"
                 )
 
-        print(f"\n{'=' * 50}")
-        print(f"Contrastive summary ({n_total} MDD patients):")
-        print(f"  Type A (both correct): {counts['Type_A_both_correct']:>4}")
-        print(f"  Type B (recovered):    {counts['Type_B_recovered']:>4}")
-        print(f"  Type C (regressed):    {counts['Type_C_regressed']:>4}")
-        print(f"  Type D (both wrong):   {counts['Type_D_both_wrong']:>4}")
-        print(f"{'=' * 50}")
-        print(f"Saved to {out_path}")
+        logger.info(f"\n{'=' * 50}")
+        logger.info(f"Contrastive summary ({n_total} MDD patients):")
+        logger.info(f"  Type A (both correct): {counts['Type_A_both_correct']:>4}")
+        logger.info(f"  Type B (recovered):    {counts['Type_B_recovered']:>4}")
+        logger.info(f"  Type C (regressed):    {counts['Type_C_regressed']:>4}")
+        logger.info(f"  Type D (both wrong):   {counts['Type_D_both_wrong']:>4}")
+        logger.info(f"{'=' * 50}")
+        logger.info(f"Saved to {out_path}")
         return out_path
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Qwen2.5-VL / Ministral — MDD inference & ablation"
     )
@@ -754,17 +752,18 @@ def parse_args():
     return p.parse_args()
 
 
-def validate_args(args):
-    # Only tabular_parcel_mri physically loads MRI files — other modes don't need the path
+def validate_args(args: argparse.Namespace) -> argparse.Namespace:
+    # Only tabular_parcel_mri loads MRI files — other modes don't need the path
     if args.mode == "tabular_parcel_mri" and not args.mri_mdd_base_path:
-        raise ValueError("tabular_parcel_mri requires --mri_mdd_base_path")
-    if not os.path.exists(args.txt_mdd_base_path):
+        raise ValueError("tabular_parcel_mri requires --mri_mdd_base_path")  # noqa: TRY003
+    if not Path(args.txt_mdd_base_path).exists():
         raise FileNotFoundError(args.txt_mdd_base_path)
-    os.makedirs(args.output_dir, exist_ok=True)
+    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     return args
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = validate_args(parse_args())
     set_seed(args.seed)
 
@@ -772,42 +771,42 @@ if __name__ == "__main__":
 
     first_split = args.splits[0]
     config = InferenceConfig(
-        txt_mdd_path=os.path.join(args.txt_mdd_base_path, first_split),
-        mri_mdd_path=os.path.join(args.mri_mdd_base_path, first_split)
+        txt_mdd_path=str(Path(args.txt_mdd_base_path) / first_split),
+        mri_mdd_path=str(Path(args.mri_mdd_base_path) / first_split)
         if args.mri_mdd_base_path
         else None,
-        output_file=os.path.join(
-            args.output_dir, f"results_{mb}_{args.mode}_{first_split}.jsonl"
+        output_file=str(
+            Path(args.output_dir) / f"results_{mb}_{args.mode}_{first_split}.jsonl"
         ),
         model_name=args.model_name,
         max_new_tokens=args.max_new_tokens,
         do_sample=args.do_sample,
     )
 
-    print("=" * 60)
-    print(f"Model      : {config.model_name}")
-    print(f"Mode       : {args.mode}")
-    print(f"Splits     : {args.splits}")
-    print(f"Contrastive: {args.run_contrastive}")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info(f"Model      : {config.model_name}")
+    logger.info(f"Mode       : {args.mode}")
+    logger.info(f"Splits     : {args.splits}")
+    logger.info(f"Contrastive: {args.run_contrastive}")
+    logger.info("=" * 60)
 
     pipeline = InferencePipeline(config)
 
     for split in args.splits:
-        print(f"\n{'=' * 60}\nSplit: {split}\n{'=' * 60}")
+        logger.info(f"\n{'=' * 60}\nSplit: {split}\n{'=' * 60}")
 
-        pipeline.config.txt_mdd_path = os.path.join(args.txt_mdd_base_path, split)
+        pipeline.config.txt_mdd_path = str(Path(args.txt_mdd_base_path) / split)
         pipeline.config.mri_mdd_path = (
-            os.path.join(args.mri_mdd_base_path, split)
+            str(Path(args.mri_mdd_base_path) / split)
             if args.mri_mdd_base_path
             else None
         )
-        pipeline.config.output_file = os.path.join(
-            args.output_dir, f"results_{mb}_{args.mode}_{split}.jsonl"
+        pipeline.config.output_file = str(
+            Path(args.output_dir) / f"results_{mb}_{args.mode}_{split}.jsonl"
         )
 
-        if not os.path.exists(pipeline.config.txt_mdd_path):
-            print(f"  Skipping — path not found: {pipeline.config.txt_mdd_path}")
+        if not Path(pipeline.config.txt_mdd_path).exists():
+            logger.info(f"  Skipping — path not found: {pipeline.config.txt_mdd_path}")
             continue
 
         if args.run_contrastive:
@@ -815,4 +814,4 @@ if __name__ == "__main__":
         else:
             pipeline.run(mode=args.mode)
 
-    print(f"\nAll splits done! Results in: {args.output_dir}")
+    logger.info(f"\nAll splits done! Results in: {args.output_dir}")

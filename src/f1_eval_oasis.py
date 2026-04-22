@@ -1,33 +1,44 @@
+import argparse
 import json
-import os
+import logging
+from pathlib import Path
+
 from tqdm import tqdm
 
+logger = logging.getLogger(__name__)
 
-def process_file(filepath, true_label, force_extract=False):
+
+def process_file(
+    filepath: str | Path, true_label: str, force_extract: bool = False
+) -> list[tuple[str, str]]:
     """
     Process a JSONL file and extract predictions.
 
     Args:
         filepath: Path to the JSONL file
-        true_label: The true label for all samples in this file ("Cognitive Normal" or "Cognitive Decline")
+        true_label: The true label for all samples in this file
+            ("Cognitive Normal" or "Cognitive Decline")
         force_extract: If True, re-extract labels even if they already exist
 
     Returns:
         List of tuples (true_label, predicted_label)
     """
-    with open(filepath, "r") as f:
-        file = f.readlines()
-    data = [json.loads(line) for line in file]
+    filepath = Path(filepath)
+    data = [
+        json.loads(line) for line in filepath.read_text().splitlines() if line.strip()
+    ]
 
     results = []
     modified = False
 
-    for entry in tqdm(data, desc=f"Processing {os.path.basename(filepath)}"):
+    for entry in tqdm(data, desc=f"Processing {filepath.name}"):
         # Check if extracted label already exists
         if not force_extract and "extracted_label" in entry:
             predicted_label = entry["extracted_label"]
-            print(
-                f"Using existing label for {entry.get('filename', 'Unknown')}: {predicted_label}"
+            logger.info(
+                "Using existing label for %s: %s",
+                entry.get("filename", "Unknown"),
+                predicted_label,
             )
         else:
             output = entry["output"]
@@ -46,10 +57,10 @@ def process_file(filepath, true_label, force_extract=False):
                 predicted_label = "Cognitive Normal"
             else:
                 # Manual classification needed
-                print(f"\n{'=' * 50}")
-                print(f"TRUE LABEL: {true_label}")
-                print(f"Filename: {entry.get('filename', 'Unknown')}")
-                print(f"Output: {output}")
+                logger.info(f"\n{'=' * 50}")
+                logger.info(f"TRUE LABEL: {true_label}")
+                logger.info(f"Filename: {entry.get('filename', 'Unknown')}")
+                logger.info(f"Output: {output}")
                 extracted_response = input("Enter 1 if correct, 0 if incorrect: ")
                 if extracted_response == "1":
                     predicted_label = true_label
@@ -68,19 +79,17 @@ def process_file(filepath, true_label, force_extract=False):
 
         results.append((true_label, predicted_label))
         if predicted_label == true_label:
-            print(f"{entry.get('filename', 'Unknown')}")
+            logger.info(f"{entry.get('filename', 'Unknown')}")
 
     # Write back to file with extracted labels
     if modified:
-        with open(filepath, "w") as f:
-            for entry in data:
-                f.write(json.dumps(entry) + "\n")
-        print(f"\nUpdated {filepath} with extracted labels")
+        filepath.write_text("\n".join(json.dumps(e) for e in data) + "\n")
+        logger.info(f"\nUpdated {filepath} with extracted labels")
 
     return results
 
 
-def calculate_metrics(all_results):
+def calculate_metrics(all_results: list[tuple[str, str]]) -> dict[str, float | int]:
     """
     Calculate classification metrics from prediction results.
 
@@ -138,11 +147,9 @@ def calculate_metrics(all_results):
     }
 
 
-def parse_args():
-    import argparse
-
+def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Evaluate cognitive decline classification results from JSONL output files."
+        description="Evaluate cognitive decline classification results from JSONL output files.",  # noqa: E501
     )
     p.add_argument(
         "--cn_file",
@@ -163,15 +170,16 @@ def parse_args():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = parse_args()
 
-    print("Processing Cognitive Normal samples...")
+    logger.info("Processing Cognitive Normal samples...")
     control_results = process_file(
         args.cn_file, "Cognitive Normal", force_extract=args.force_extract
     )
 
-    print("\n" + "=" * 50)
-    print("Processing Cognitive Decline samples...")
+    logger.info("\n" + "=" * 50)
+    logger.info("Processing Cognitive Decline samples...")
     mdd_results = process_file(
         args.cd_file, "Cognitive Decline", force_extract=args.force_extract
     )
@@ -179,18 +187,19 @@ if __name__ == "__main__":
     all_results = control_results + mdd_results
     metrics = calculate_metrics(all_results)
 
-    print("\n" + "=" * 50)
-    print("CLASSIFICATION METRICS")
-    print("=" * 50)
-    print(
-        f"Accuracy:    {metrics['accuracy']:.4f} ({metrics['tp'] + metrics['tn']}/{metrics['total']})"
+    logger.info("\n" + "=" * 50)
+    logger.info("CLASSIFICATION METRICS")
+    logger.info("=" * 50)
+    correct = metrics["tp"] + metrics["tn"]
+    logger.info(
+        "Accuracy:    %.4f (%d/%d)", metrics["accuracy"], correct, metrics["total"]
     )
-    print(f"Precision:   {metrics['precision']:.4f}")
-    print(f"Recall:      {metrics['recall']:.4f}")
-    print(f"Specificity: {metrics['specificity']:.4f}")
-    print(f"F1 Score:    {metrics['f1_score']:.4f}")
-    print("\nConfusion Matrix:")
-    print(f"  True Positives (Cognitive Decline): {metrics['tp']}")
-    print(f"  True Negatives (Cognitive Normal):  {metrics['tn']}")
-    print(f"  False Positives:                    {metrics['fp']}")
-    print(f"  False Negatives:                    {metrics['fn']}")
+    logger.info(f"Precision:   {metrics['precision']:.4f}")
+    logger.info(f"Recall:      {metrics['recall']:.4f}")
+    logger.info(f"Specificity: {metrics['specificity']:.4f}")
+    logger.info(f"F1 Score:    {metrics['f1_score']:.4f}")
+    logger.info("\nConfusion Matrix:")
+    logger.info(f"  True Positives (Cognitive Decline): {metrics['tp']}")
+    logger.info(f"  True Negatives (Cognitive Normal):  {metrics['tn']}")
+    logger.info(f"  False Positives:                    {metrics['fp']}")
+    logger.info(f"  False Negatives:                    {metrics['fn']}")

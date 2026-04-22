@@ -1,25 +1,29 @@
-import os
 import argparse
 import json
+import logging
+from collections import defaultdict
+from pathlib import Path
+
+import matplotlib
 import numpy as np
 import torch
-import matplotlib
 
 matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
-from typing import List, Dict, Tuple, Optional
 from tqdm import tqdm
 
+logger = logging.getLogger(__name__)
+
 try:
-    import scienceplots
+    import scienceplots  # noqa: F401
 
     plt.style.use(["science", "no-latex"])
 except ImportError:
     pass
 
-from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
-from qwen_vl_utils import process_vision_info
-
+from qwen_vl_utils import process_vision_info  # noqa: E402
+from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration  # noqa: E402
 
 SCAFFOLD_LAYER = 33  # 1-indexed; the last layer BEFORE the decision forms
 # (layer 34 is where signal first appears; layer 33 is the input to that step)
@@ -92,7 +96,7 @@ CANDIDATE_PHRASES = {
 
 class ScaffoldModel:
     def __init__(self, model_name: str):
-        print(f"\nLoading {model_name} ...")
+        logger.info(f"\nLoading {model_name} ...")
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16,
@@ -107,19 +111,19 @@ class ScaffoldModel:
         self.ctrl_tok_id = self.tokenizer.encode(
             CONTROL_TOKEN, add_special_tokens=False
         )[0]
-        print(f"  MDD token id:  {self.mdd_tok_id}  '{MDD_TOKEN}'")
-        print(f"  Ctrl token id: {self.ctrl_tok_id}  '{CONTROL_TOKEN}'")
+        logger.info(f"  MDD token id:  {self.mdd_tok_id}  '{MDD_TOKEN}'")
+        logger.info(f"  Ctrl token id: {self.ctrl_tok_id}  '{CONTROL_TOKEN}'")
 
         # LM components (confirmed paths)
         self.lm_head = self.model.lm_head
         self.n_hidden = self.lm_head.weight.shape[1]
         self.final_ln = self.model.model.language_model.norm
-        print(f"  Hidden size: {self.n_hidden}")
+        logger.info(f"  Hidden size: {self.n_hidden}")
 
         # Collect all layer modules for hook-free hidden state extraction
         # We use output_hidden_states=True in generate()
 
-    def _prepare(self, messages):
+    def _prepare(self, messages: list[dict]) -> dict:
         tmpl = self.processor.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False
         )
@@ -134,10 +138,10 @@ class ScaffoldModel:
 
     def get_label_hidden_state(
         self,
-        messages: List[Dict],
+        messages: list[dict],
         target_layer: int = SCAFFOLD_LAYER,  # 1-indexed
         max_new_tokens: int = 80,
-    ) -> Optional[Tuple[np.ndarray, str, float, float]]:
+    ) -> tuple[np.ndarray, str, float, float] | None:
         """
         Generate and return the hidden state at `target_layer` at the
         decode step where the label token is produced.
@@ -194,8 +198,8 @@ class ScaffoldModel:
 
         return h, found_label, p_mdd, p_ctrl
 
-    def get_p_mdd_final(self, messages, max_new_tokens=80):
-        """Quick scalar: P(MDD) at final layer at label step. Returns None if label absent."""
+    def get_p_mdd_final(self, messages: list[dict], max_new_tokens: int = 80) -> tuple:
+        """Quick scalar: P(MDD) at final layer at label step. None if label absent."""
         result = self.get_label_hidden_state(messages, max_new_tokens=max_new_tokens)
         if result is None:
             return None, None, None
@@ -203,7 +207,7 @@ class ScaffoldModel:
         return p_mdd, p_ctrl, found_label
 
 
-def build_messages(text, preamble: str):
+def build_messages(text: str, preamble: str) -> list[dict]:
     prompt = (
         preamble + "\n"
         "Classify the patient into one of the following categories:\n"
@@ -219,7 +223,7 @@ def build_messages(text, preamble: str):
             "content": [
                 {
                     "type": "text",
-                    "text": "You are a helpful medical assistant in clinical psychiatry.",
+                    "text": "You are a helpful medical assistant in clinical psychiatry.",  # noqa: E501
                 }
             ],
         },
@@ -227,14 +231,13 @@ def build_messages(text, preamble: str):
     ]
 
 
-def load_patients(txt_path, label, n=None):
+def load_patients(txt_path: str, label: str, n: int | None = None) -> list[tuple]:
     out = []
-    for f in sorted(os.listdir(txt_path)):
-        if not f.lower().endswith(".txt"):
+    for fp in sorted(Path(txt_path).iterdir()):
+        if fp.suffix.lower() != ".txt":
             continue
-        with open(os.path.join(txt_path, f)) as fh:
-            text = fh.read()
-        out.append((os.path.splitext(f)[0], text, label))
+        text = fp.read_text()
+        out.append((fp.stem, text, label))
         if n and len(out) >= n:
             break
     return out
@@ -242,7 +245,7 @@ def load_patients(txt_path, label, n=None):
 
 def extract_scaffold_direction(
     model: ScaffoldModel,
-    patients: List[Tuple],
+    patients: list[tuple],
     output_dir: str,
     target_layer: int = SCAFFOLD_LAYER,
 ) -> np.ndarray:
@@ -255,13 +258,15 @@ def extract_scaffold_direction(
     h_tabular = []
     h_mri = []
 
-    print(f"\nStep 1: Extracting layer-{target_layer} hidden states ...")
-    print(
-        f"  Patients: {len(patients)}  ×  2 conditions = {2 * len(patients)} forward passes"
+    logger.info(f"\nStep 1: Extracting layer-{target_layer} hidden states ...")
+    logger.info(
+        "  Patients: %d x 2 conditions = %d forward passes",
+        len(patients),
+        2 * len(patients),
     )
 
     skips = 0
-    for pid, text, true_label in tqdm(patients, desc="Extracting"):
+    for pid, text, _true_label in tqdm(patients, desc="Extracting"):
         for preamble, store in [
             (TABULAR_PREAMBLE, h_tabular),
             (MRI_PREAMBLE, h_mri),
@@ -273,16 +278,16 @@ def extract_scaffold_direction(
                 skips += 1
                 store.append(None)
             else:
-                h, found_label, p_mdd, p_ctrl = result
+                h, _found_label, _p_mdd, _p_ctrl = result
                 store.append(h)
 
     # Filter to matched pairs (both conditions succeeded)
     pairs = [
         (ht, hm)
-        for ht, hm in zip(h_tabular, h_mri)
+        for ht, hm in zip(h_tabular, h_mri, strict=False)
         if ht is not None and hm is not None
     ]
-    print(f"  Valid pairs: {len(pairs)}  (skipped {skips})")
+    logger.info(f"  Valid pairs: {len(pairs)}  (skipped {skips})")
 
     h_tab_arr = np.stack([p[0] for p in pairs])  # (n, hidden)
     h_mri_arr = np.stack([p[1] for p in pairs])
@@ -291,7 +296,7 @@ def extract_scaffold_direction(
     scaffold_dir_norm = scaffold_dir / (np.linalg.norm(scaffold_dir) + 1e-9)
 
     # Save
-    path = os.path.join(output_dir, "scaffold_direction.npz")
+    path = Path(output_dir) / "scaffold_direction.npz"
     np.savez(
         path,
         scaffold_dir=scaffold_dir,
@@ -299,29 +304,24 @@ def extract_scaffold_direction(
         h_tabular=h_tab_arr,
         h_mri=h_mri_arr,
     )
-    print(f"  Saved: {path}")
-    print(f"  Scaffold direction norm: {np.linalg.norm(scaffold_dir):.4f}")
-    print(
-        f"  Mean cos(h_mri, dir): "
-        f"{
-            np.dot(
-                h_mri_arr / (np.linalg.norm(h_mri_arr, axis=1, keepdims=True) + 1e-9),
-                scaffold_dir_norm,
-            ).mean():.4f}"
-    )
+    logger.info(f"  Saved: {path}")
+    logger.info(f"  Scaffold direction norm: {np.linalg.norm(scaffold_dir):.4f}")
+    h_mri_norm = h_mri_arr / (np.linalg.norm(h_mri_arr, axis=1, keepdims=True) + 1e-9)
+    mean_cos = np.dot(h_mri_norm, scaffold_dir_norm).mean()
+    logger.info(f"  Mean cos(h_mri, dir): {mean_cos:.4f}")
 
     return scaffold_dir_norm
 
 
-def single_token_search(
+def single_token_search(  # noqa: PLR0913, C901
     model: ScaffoldModel,
     scaffold_dir: np.ndarray,
-    patients: List[Tuple],
+    patients: list[tuple],
     output_dir: str,
     target_layer: int = SCAFFOLD_LAYER,
     top_k: int = 100,
     vocab_sample: int = 5000,  # test this many tokens (full vocab=151936 is too slow)
-) -> List[Tuple]:
+) -> list[tuple]:
     """
     For a sample of vocabulary tokens, prepend the token to the tabular prompt
     and measure cosine similarity of the resulting layer-{target_layer} hidden
@@ -329,9 +329,9 @@ def single_token_search(
 
     We use a single patient for speed, then re-rank by effect size.
     """
-    print(f"\nStep 2: Single-token vocabulary search (sample={vocab_sample}) ...")
+    logger.info(f"\nStep 2: Single-token vocabulary search (sample={vocab_sample}) ...")
 
-    pid, text, true_label = patients[0]
+    _pid, text, _true_label = patients[0]
 
     # Sample vocab: prioritize alphabetic single-word tokens, skip special tokens
     tokenizer = model.tokenizer
@@ -341,18 +341,18 @@ def single_token_search(
     candidate_ids = []
     for tid in all_ids:
         tok = tokenizer.decode([tid])
-        if tok.strip() and tok.replace(" ", "").isalpha() and len(tok.strip()) >= 2:
+        if tok.strip() and tok.replace(" ", "").isalpha() and len(tok.strip()) >= 2:  # noqa: PLR2004
             candidate_ids.append(tid)
         if len(candidate_ids) >= vocab_sample:
             break
 
-    print(f"  Filtered vocab candidates: {len(candidate_ids)}")
+    logger.info(f"  Filtered vocab candidates: {len(candidate_ids)}")
 
     # Baseline hidden state (no extra prefix)
     msgs_base = build_messages(text, TABULAR_PREAMBLE)
     res_base = model.get_label_hidden_state(msgs_base, target_layer=target_layer)
     if res_base is None:
-        print("  [ERR] Baseline failed")
+        logger.error(" Baseline failed")
         return []
     h_base = res_base[0]
 
@@ -376,18 +376,18 @@ def single_token_search(
     top = results[:top_k]
     bottom = results[-top_k:]  # most anti-scaffold (interesting too)
 
-    print(f"\n  Top-{min(20, top_k)} scaffold-aligned single tokens:")
-    print(f"  {'Rank':<5} {'CosSim':>8} {'P(MDD)':>8}  Token")
-    for i, (cos, pm, tid, tok) in enumerate(top[:20]):
-        print(f"  {i + 1:<5} {cos:>8.4f} {pm:>8.4f}  '{tok}'")
+    logger.info(f"\n  Top-{min(20, top_k)} scaffold-aligned single tokens:")
+    logger.info(f"  {'Rank':<5} {'CosSim':>8} {'P(MDD)':>8}  Token")
+    for i, (cos, pm, _tid, tok) in enumerate(top[:20]):
+        logger.info(f"  {i + 1:<5} {cos:>8.4f} {pm:>8.4f}  '{tok}'")
 
-    print("\n  Top-10 anti-scaffold tokens (push toward Control):")
-    for i, (cos, pm, tid, tok) in enumerate(bottom[:10]):
-        print(f"  {'─':>5} {cos:>8.4f} {pm:>8.4f}  '{tok}'")
+    logger.info("\n  Top-10 anti-scaffold tokens (push toward Control):")
+    for _i, (cos, pm, _tid, tok) in enumerate(bottom[:10]):
+        logger.info(f"  {'─':>5} {cos:>8.4f} {pm:>8.4f}  '{tok}'")
 
     # Save
-    path = os.path.join(output_dir, "token_search_results.json")
-    with open(path, "w") as f:
+    path = Path(output_dir) / "token_search_results.json"
+    with path.open("w") as f:
         json.dump(
             {
                 "top_scaffold": [(c, p, t, tok) for c, p, t, tok in top],
@@ -396,33 +396,36 @@ def single_token_search(
             f,
             indent=2,
         )
-    print(f"  Saved: {path}")
+    logger.info(f"  Saved: {path}")
     return top
 
 
-def phrase_search(
+def phrase_search(  # noqa: C901
     model: ScaffoldModel,
     scaffold_dir: np.ndarray,
-    patients: List[Tuple],
+    patients: list[tuple],
     output_dir: str,
     target_layer: int = SCAFFOLD_LAYER,
-) -> List[Dict]:
+) -> list[dict]:
     """
     Test each candidate phrase by:
       1. Measuring cosine similarity of the hidden state shift to scaffold_dir
       2. Measuring actual P(MDD) at the final layer
     Both across multiple patients for reliability.
     """
-    print(
-        f"\nStep 3: Phrase search ({sum(len(v) for v in CANDIDATE_PHRASES.values())} phrases × {len(patients)} patients) ..."
+    n_phrases = sum(len(v) for v in CANDIDATE_PHRASES.values())
+    logger.info(
+        "\nStep 3: Phrase search (%d phrases x %d patients) ...",
+        n_phrases,
+        len(patients),
     )
 
     # Baseline: tabular-only P(MDD) per patient
-    print("  Computing baselines ...")
+    logger.info("  Computing baselines ...")
     baselines_h = {}  # pid → h at target_layer
     baselines_pm = {}  # pid → P(MDD)
 
-    for pid, text, true_label in tqdm(patients, desc="Baseline"):
+    for pid, text, _true_label in tqdm(patients, desc="Baseline"):
         msgs = build_messages(text, TABULAR_PREAMBLE)
         res = model.get_label_hidden_state(msgs, target_layer=target_layer)
         if res is None:
@@ -430,18 +433,18 @@ def phrase_search(
         baselines_h[pid] = res[0]
         baselines_pm[pid] = res[2]
 
-    print(f"  Valid baselines: {len(baselines_h)}")
+    logger.info(f"  Valid baselines: {len(baselines_h)}")
 
     all_results = []
 
     for category, phrases in CANDIDATE_PHRASES.items():
-        print(f"\n  Category: {category}")
+        logger.info(f"\n  Category: {category}")
         for phrase in phrases:
             cos_sims = []
             p_mdds = []
             p_shifts = []  # P(MDD) shift vs baseline
 
-            for pid, text, true_label in patients:
+            for pid, text, _true_label in patients:
                 if pid not in baselines_h:
                     continue
                 msgs = build_messages(text, phrase)
@@ -475,7 +478,7 @@ def phrase_search(
                 "n": len(cos_sims),
             }
             all_results.append(result)
-            print(
+            logger.info(
                 f"    cos={result['cos_sim_mean']:+.3f}  "
                 f"P(MDD)={result['p_mdd_mean']:.3f}  "
                 f"shift={result['p_shift_mean']:+.3f}  "
@@ -485,30 +488,30 @@ def phrase_search(
     # Sort by cosine similarity
     all_results.sort(key=lambda x: x["cos_sim_mean"], reverse=True)
 
-    print(f"\n{'─' * 80}")
-    print("PHRASE SEARCH RANKING (by cosine similarity to scaffold direction)")
-    print(f"{'─' * 80}")
-    print(f"{'Rank':<5} {'CosSim':>8} {'P(MDD)':>8} {'Shift':>8}  Category / Phrase")
-    print(f"{'─' * 80}")
+    logger.info(f"\n{'─' * 80}")
+    logger.info("PHRASE SEARCH RANKING (by cosine similarity to scaffold direction)")
+    logger.info(f"{'─' * 80}")
+    logger.info(
+        "%-5s %8s %8s %8s  Category / Phrase", "Rank", "CosSim", "P(MDD)", "Shift"
+    )
+    logger.info(f"{'─' * 80}")
     for i, r in enumerate(all_results):
-        print(
+        logger.info(
             f"  {i + 1:<4} {r['cos_sim_mean']:>+8.4f} {r['p_mdd_mean']:>8.4f} "
             f"{r['p_shift_mean']:>+8.4f}  [{r['category']}] '{r['phrase'][:55]}'"
         )
 
-    path = os.path.join(output_dir, "phrase_search_results.json")
-    with open(path, "w") as f:
+    path = Path(output_dir) / "phrase_search_results.json"
+    with path.open("w") as f:
         json.dump(all_results, f, indent=2)
-    print(f"\n  Saved: {path}")
+    logger.info(f"\n  Saved: {path}")
     return all_results
 
 
-def plot_phrase_results(all_results: List[Dict], output_dir: str):
+def plot_phrase_results(all_results: list[dict], output_dir: str) -> None:
     """Bar chart of cosine similarity and P(MDD) shift by phrase category."""
     if not all_results:
         return
-
-    from collections import defaultdict
 
     by_cat = defaultdict(list)
     for r in all_results:
@@ -542,7 +545,7 @@ def plot_phrase_results(all_results: List[Dict], output_dir: str):
             "P(MDD) shift vs tabular-only\n(by phrase category)",
         ),
     ]:
-        bars = ax.barh(
+        ax.barh(
             range(len(categories)), vals, color=colors, edgecolor="white", linewidth=0.5
         )
         ax.axvline(0, color="grey", lw=0.8, ls="--")
@@ -554,13 +557,13 @@ def plot_phrase_results(all_results: List[Dict], output_dir: str):
 
     fig.suptitle("Scaffold Direction Search - FOR2107", fontsize=10, y=1.02)
     fig.tight_layout()
-    out = os.path.join(output_dir, "scaffold_phrase_results.pdf")
+    out = Path(output_dir) / "scaffold_phrase_results.pdf"
     fig.savefig(out, bbox_inches="tight", dpi=300)
     plt.close(fig)
-    print(f"  Saved: {out}")
+    logger.info(f"  Saved: {out}")
 
 
-def plot_top_phrases_scatter(all_results, output_dir):
+def plot_top_phrases_scatter(all_results: list[dict], output_dir: str) -> None:
     """Scatter: cosine sim (x) vs P(MDD) shift (y), coloured by category."""
     if not all_results:
         return
@@ -579,7 +582,7 @@ def plot_top_phrases_scatter(all_results, output_dir):
             alpha=0.8,
             zorder=3,
         )
-        if abs(r["cos_sim_mean"]) > 0.1 or abs(r["p_shift_mean"]) > 0.05:
+        if abs(r["cos_sim_mean"]) > 0.1 or abs(r["p_shift_mean"]) > 0.05:  # noqa: PLR2004
             ax.annotate(
                 r["phrase"][:35],
                 (r["cos_sim_mean"], r["p_shift_mean"]),
@@ -604,13 +607,13 @@ def plot_top_phrases_scatter(all_results, output_dir):
         fontsize=9,
     )
     fig.tight_layout()
-    out = os.path.join(output_dir, "scaffold_scatter.pdf")
+    out = Path(output_dir) / "scaffold_scatter.pdf"
     fig.savefig(out, bbox_inches="tight", dpi=300)
     plt.close(fig)
-    print(f"  Saved: {out}")
+    logger.info(f"  Saved: {out}")
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--txt_mdd_path", required=True)
     p.add_argument("--txt_ctrl_path", required=True)
@@ -638,25 +641,26 @@ def parse_args():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = parse_args()
-    os.makedirs(args.output_dir, exist_ok=True)
+    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     model = ScaffoldModel(args.model_name)
 
-    print(f"\nLoading {args.n_patients} patients per class ...")
+    logger.info(f"\nLoading {args.n_patients} patients per class ...")
     mdd_pts = load_patients(args.txt_mdd_path, "MDD", args.n_patients)
     ctrl_pts = load_patients(args.txt_ctrl_path, "Control", args.n_patients)
     # Use MDD patients for direction extraction (they show the clearest shift)
     # Use all patients for phrase search
     direction_patients = mdd_pts
     all_patients = mdd_pts + ctrl_pts
-    print(f"  MDD={len(mdd_pts)}  Control={len(ctrl_pts)}")
+    logger.info(f"  MDD={len(mdd_pts)}  Control={len(ctrl_pts)}")
 
     if args.load_direction:
         data = np.load(args.load_direction)
         scaffold_dir = data["scaffold_dir_norm"]
-        print(f"\nLoaded scaffold direction from {args.load_direction}")
-        print(f"  Norm: {np.linalg.norm(data['scaffold_dir']):.4f}")
+        logger.info(f"\nLoaded scaffold direction from {args.load_direction}")
+        logger.info(f"  Norm: {np.linalg.norm(data['scaffold_dir']):.4f}")
     else:
         scaffold_dir = extract_scaffold_direction(
             model, direction_patients, args.output_dir, args.scaffold_layer
@@ -672,14 +676,14 @@ if __name__ == "__main__":
             vocab_sample=args.vocab_sample,
         )
     else:
-        print("\nSkipping Step 2 (single-token search)")
+        logger.info("\nSkipping Step 2 (single-token search)")
 
     phrase_results = phrase_search(
         model, scaffold_dir, mdd_pts, args.output_dir, args.scaffold_layer
     )
 
-    print("\nGenerating figures ...")
+    logger.info("\nGenerating figures ...")
     plot_phrase_results(phrase_results, args.output_dir)
     plot_top_phrases_scatter(phrase_results, args.output_dir)
 
-    print(f"\nDone. Results in {args.output_dir}")
+    logger.info(f"\nDone. Results in {args.output_dir}")

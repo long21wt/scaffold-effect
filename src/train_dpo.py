@@ -1,11 +1,15 @@
 import argparse
+import logging
 import os
+from pathlib import Path
 
 import torch
 from datasets import enable_progress_bars, load_from_disk
 from peft import LoraConfig, TaskType
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 from trl import DPOConfig, DPOTrainer
+
+logger = logging.getLogger(__name__)
 
 MODEL_NAME = "Qwen/Qwen2.5-VL-3B-Instruct"
 
@@ -31,8 +35,8 @@ def build_lora_config() -> LoraConfig:
     )
 
 
-def load_model_and_processor(model_name: str):
-    print(f"Loading model: {model_name}")
+def load_model_and_processor(model_name: str) -> tuple:
+    logger.info("loading %s", model_name)
 
     # device_map="auto" is incompatible with multi-GPU DDP - each process
     # must own exactly one GPU. Accelerate assigns the correct device per rank.
@@ -52,26 +56,26 @@ def load_model_and_processor(model_name: str):
     return model, processor
 
 
-def load_dataset(dataset_dir: str, val_split: float = 0.05, seed: int = 42):
-    print(f"Loading dataset from {dataset_dir}")
+def load_dataset(dataset_dir: str, val_split: float = 0.05, seed: int = 42) -> tuple:
+    logger.info("loading dataset from %s", dataset_dir)
     ds = load_from_disk(dataset_dir)
 
     # All three modes included - tabular, tabular_parcel, tabular_parcel_mri.
     # With max_length=None the image token mismatch cannot occur because
     # sequences are never truncated, so no image placeholders get clipped.
-    print(f"Total rows: {len(ds)}")
-    print(f"Modes: {set(ds['mode'])}")
+    logger.info("total rows: %d", len(ds))
+    logger.info("modes: %s", set(ds['mode']))
 
     ds = ds.shuffle(seed=seed)
     split = ds.train_test_split(test_size=val_split, seed=seed)
     train_ds = split["train"]
     eval_ds = split["test"]
 
-    print(f"Train: {len(train_ds)} rows | Eval: {len(eval_ds)} rows")
+    logger.info("train: %d  eval: %d", len(train_ds), len(eval_ds))
     return train_ds, eval_ds
 
 
-def build_dpo_config(args) -> DPOConfig:
+def build_dpo_config(args: argparse.Namespace) -> DPOConfig:
     return DPOConfig(
         output_dir=args.output_dir,
         run_name=args.run_name,
@@ -88,7 +92,7 @@ def build_dpo_config(args) -> DPOConfig:
         lr_scheduler_type="cosine",
         learning_rate=5e-5,
         # batch_size=1 because max_length=None means individual multimodal
-        # samples may be large (MRI slices). Effective batch = 1×16 = 16.
+        # samples may be large (MRI slices). Effective batch = 1x16 = 16.
         per_device_train_batch_size=1,
         per_device_eval_batch_size=1,
         gradient_accumulation_steps=16,
@@ -111,7 +115,7 @@ def build_dpo_config(args) -> DPOConfig:
     )
 
 
-def main(args):
+def main(args: argparse.Namespace) -> None:
     # Reduce memory fragmentation — important with variable-length VLM batches
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -124,7 +128,7 @@ def main(args):
     peft_config = build_lora_config() if not args.full_finetune else None
 
     # max_length=None: avoids image token length mismatch
-    # loss_type: sigmoid×0.8 + bco_pair×0.2 + sft×1.0
+    # loss_type: sigmoid x 0.8 + bco_pair x 0.2 + sft x 1.0
     trainer = DPOTrainer(
         model=model,
         args=config,
@@ -137,15 +141,20 @@ def main(args):
     if peft_config is not None:
         trainer.model.print_trainable_parameters()
 
-    print(f"MPO  model={MODEL_NAME}  lora={not args.full_finetune}  out={args.output_dir}")
+    logger.info(
+        "MPO model=%s lora=%s out=%s",
+        MODEL_NAME,
+        not args.full_finetune,
+        args.output_dir,
+    )
     trainer.train()
 
     trainer.save_model(args.output_dir)
     processor.save_pretrained(args.output_dir)
-    print(f"saved {args.output_dir}")
+    logger.info("saved %s", args.output_dir)
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="MPO fine-tuning for Qwen2.5-VL-3B on OASIS DPO dataset"
     )
@@ -168,6 +177,7 @@ def parse_args():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = parse_args()
-    os.makedirs(args.output_dir, exist_ok=True)
+    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)
