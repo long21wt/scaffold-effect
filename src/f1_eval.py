@@ -179,14 +179,14 @@ if __name__ == "__main__":
     logger.info("=" * 50)
     correct = metrics["tp"] + metrics["tn"]
     logger.info(
-        "Accuracy:    %.4f (%d/%d)", metrics["accuracy"], correct, metrics["total"]
+        "Accuracy: %.4f (%d/%d)", metrics["accuracy"], correct, metrics["total"]
     )
-    logger.info(f"Precision:   {metrics['precision']:.4f}")
-    logger.info(f"Recall:      {metrics['recall']:.4f}")
+    logger.info(f"Precision: {metrics['precision']:.4f}")
+    logger.info(f"Recall: {metrics['recall']:.4f}")
     logger.info(f"Specificity: {metrics['specificity']:.4f}")
-    logger.info(f"F1 Score:    {metrics['f1_score']:.4f}")
+    logger.info(f"F1 Score: {metrics['f1_score']:.4f}")
     logger.info("\nConfusion Matrix:")
-    logger.info(f"  True Positives (MDD):     {metrics['tp']}")
-    logger.info(f"  True Negatives (Control): {metrics['tn']}")
-    logger.info(f"  False Positives:          {metrics['fp']}")
-    logger.info(f"  False Negatives:          {metrics['fn']}")
+    logger.info(f"True Positives (MDD):{metrics['tp']}")
+    logger.info(f"True Negatives (Control): {metrics['tn']}")
+    logger.info(f"False Positives: {metrics['fp']}")
+    logger.info(f"False Negatives: {metrics['fn']}")

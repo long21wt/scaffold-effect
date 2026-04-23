@@ -5,7 +5,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
-from scipy import stats
 
 logger = logging.getLogger(__name__)
 
@@ -147,20 +146,6 @@ def summarize_three_way(df: pd.DataFrame, split: str) -> dict:
     def s(col: str) -> float:
         return df[col].std()
 
-    def wilcoxon(a: pd.Series, b: pd.Series) -> tuple[float, float]:
-        diff = a - b
-        if (diff == 0).all():
-            return float("nan"), float("nan")
-        try:
-            stat, p = stats.wilcoxon(diff.dropna(), alternative="greater")
-            return float(stat), float(p)
-        except ValueError:
-            return float("nan"), float("nan")
-
-    w_pre_stat, w_pre_p = wilcoxon(df["p_mdd_preamble"], df["p_mdd_baseline"])
-    w_full_stat, w_full_p = wilcoxon(df["p_mdd_full"], df["p_mdd_baseline"])
-    w_fvp_stat, w_fvp_p = wilcoxon(df["p_mdd_full"], df["p_mdd_preamble"])
-
     return {
         "split": split,
         "n_total": n,
@@ -179,12 +164,6 @@ def summarize_three_way(df: pd.DataFrame, split: str) -> dict:
         "std_delta_full": s("delta_full"),
         "mean_delta_full_vs_pre": m("delta_full_vs_preamble"),
         "std_delta_full_vs_pre": s("delta_full_vs_preamble"),
-        "wilcoxon_preamble_vs_base_stat": w_pre_stat,
-        "wilcoxon_preamble_vs_base_p": w_pre_p,
-        "wilcoxon_full_vs_base_stat": w_full_stat,
-        "wilcoxon_full_vs_base_p": w_full_p,
-        "wilcoxon_full_vs_preamble_stat": w_fvp_stat,
-        "wilcoxon_full_vs_preamble_p": w_fvp_p,
     }
 
 
@@ -209,21 +188,6 @@ def print_summary(s: dict) -> None:
         "delta full vs preamble: %+.3f+-%.3f",
         s["mean_delta_full_vs_pre"],
         s["std_delta_full_vs_pre"],
-    )
-    logger.info(
-        "wilcoxon preamble>base: W=%.1f p=%.4f",
-        s["wilcoxon_preamble_vs_base_stat"],
-        s["wilcoxon_preamble_vs_base_p"],
-    )
-    logger.info(
-        "wilcoxon full>base: W=%.1f p=%.4f",
-        s["wilcoxon_full_vs_base_stat"],
-        s["wilcoxon_full_vs_base_p"],
-    )
-    logger.info(
-        "wilcoxon full>preamble: W=%.1f p=%.4f",
-        s["wilcoxon_full_vs_preamble_stat"],
-        s["wilcoxon_full_vs_preamble_p"],
     )
 
 

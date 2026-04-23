@@ -111,14 +111,14 @@ class ScaffoldModel:
         self.ctrl_tok_id = self.tokenizer.encode(
             CONTROL_TOKEN, add_special_tokens=False
         )[0]
-        logger.info(f"  MDD token id:  {self.mdd_tok_id}  '{MDD_TOKEN}'")
-        logger.info(f"  Ctrl token id: {self.ctrl_tok_id}  '{CONTROL_TOKEN}'")
+        logger.info(f"MDD token id:  {self.mdd_tok_id}  '{MDD_TOKEN}'")
+        logger.info(f"Ctrl token id: {self.ctrl_tok_id}  '{CONTROL_TOKEN}'")
 
         # LM components (confirmed paths)
         self.lm_head = self.model.lm_head
         self.n_hidden = self.lm_head.weight.shape[1]
         self.final_ln = self.model.model.language_model.norm
-        logger.info(f"  Hidden size: {self.n_hidden}")
+        logger.info(f"Hidden size: {self.n_hidden}")
 
         # Collect all layer modules for hook-free hidden state extraction
         # We use output_hidden_states=True in generate()
@@ -287,7 +287,7 @@ def extract_scaffold_direction(
         for ht, hm in zip(h_tabular, h_mri, strict=False)
         if ht is not None and hm is not None
     ]
-    logger.info(f"  Valid pairs: {len(pairs)}  (skipped {skips})")
+    logger.info(f"Valid pairs: {len(pairs)}  (skipped {skips})")
 
     h_tab_arr = np.stack([p[0] for p in pairs])  # (n, hidden)
     h_mri_arr = np.stack([p[1] for p in pairs])
@@ -304,11 +304,11 @@ def extract_scaffold_direction(
         h_tabular=h_tab_arr,
         h_mri=h_mri_arr,
     )
-    logger.info(f"  Saved: {path}")
-    logger.info(f"  Scaffold direction norm: {np.linalg.norm(scaffold_dir):.4f}")
+    logger.info(f"Saved: {path}")
+    logger.info(f"Scaffold direction norm: {np.linalg.norm(scaffold_dir):.4f}")
     h_mri_norm = h_mri_arr / (np.linalg.norm(h_mri_arr, axis=1, keepdims=True) + 1e-9)
     mean_cos = np.dot(h_mri_norm, scaffold_dir_norm).mean()
-    logger.info(f"  Mean cos(h_mri, dir): {mean_cos:.4f}")
+    logger.info(f"Mean cos(h_mri, dir): {mean_cos:.4f}")
 
     return scaffold_dir_norm
 
@@ -346,7 +346,7 @@ def single_token_search(  # noqa: PLR0913, C901
         if len(candidate_ids) >= vocab_sample:
             break
 
-    logger.info(f"  Filtered vocab candidates: {len(candidate_ids)}")
+    logger.info(f"Filtered vocab candidates: {len(candidate_ids)}")
 
     # Baseline hidden state (no extra prefix)
     msgs_base = build_messages(text, TABULAR_PREAMBLE)
@@ -396,7 +396,7 @@ def single_token_search(  # noqa: PLR0913, C901
             f,
             indent=2,
         )
-    logger.info(f"  Saved: {path}")
+    logger.info(f"Saved: {path}")
     return top
 
 
@@ -421,9 +421,9 @@ def phrase_search(  # noqa: C901
     )
 
     # Baseline: tabular-only P(MDD) per patient
-    logger.info("  Computing baselines ...")
-    baselines_h = {}  # pid → h at target_layer
-    baselines_pm = {}  # pid → P(MDD)
+    logger.info("Computing baselines ...")
+    baselines_h = {}  # pid -> h at target_layer
+    baselines_pm = {}  # pid -> P(MDD)
 
     for pid, text, _true_label in tqdm(patients, desc="Baseline"):
         msgs = build_messages(text, TABULAR_PREAMBLE)
@@ -433,7 +433,7 @@ def phrase_search(  # noqa: C901
         baselines_h[pid] = res[0]
         baselines_pm[pid] = res[2]
 
-    logger.info(f"  Valid baselines: {len(baselines_h)}")
+    logger.info(f"Valid baselines: {len(baselines_h)}")
 
     all_results = []
 
@@ -479,7 +479,7 @@ def phrase_search(  # noqa: C901
             }
             all_results.append(result)
             logger.info(
-                f"    cos={result['cos_sim_mean']:+.3f}  "
+                f"cos={result['cos_sim_mean']:+.3f}  "
                 f"P(MDD)={result['p_mdd_mean']:.3f}  "
                 f"shift={result['p_shift_mean']:+.3f}  "
                 f"'{phrase[:60]}'"
@@ -560,7 +560,7 @@ def plot_phrase_results(all_results: list[dict], output_dir: str) -> None:
     out = Path(output_dir) / "scaffold_phrase_results.pdf"
     fig.savefig(out, bbox_inches="tight", dpi=300)
     plt.close(fig)
-    logger.info(f"  Saved: {out}")
+    logger.info(f"Saved: {out}")
 
 
 def plot_top_phrases_scatter(all_results: list[dict], output_dir: str) -> None:
@@ -610,7 +610,7 @@ def plot_top_phrases_scatter(all_results: list[dict], output_dir: str) -> None:
     out = Path(output_dir) / "scaffold_scatter.pdf"
     fig.savefig(out, bbox_inches="tight", dpi=300)
     plt.close(fig)
-    logger.info(f"  Saved: {out}")
+    logger.info(f"Saved: {out}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -660,7 +660,7 @@ if __name__ == "__main__":
         data = np.load(args.load_direction)
         scaffold_dir = data["scaffold_dir_norm"]
         logger.info(f"\nLoaded scaffold direction from {args.load_direction}")
-        logger.info(f"  Norm: {np.linalg.norm(data['scaffold_dir']):.4f}")
+        logger.info(f"Norm: {np.linalg.norm(data['scaffold_dir']):.4f}")
     else:
         scaffold_dir = extract_scaffold_direction(
             model, direction_patients, args.output_dir, args.scaffold_layer

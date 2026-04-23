@@ -109,7 +109,7 @@ def compute_binary_probs(
         "p_control_norm": p_control / total,
         "p_mdd_seq": p_mdd,
         "p_control_seq": p_control,
-        "decision_margin": p_mdd_first - p_ctrl_first,  # + → leans MDD
+        "decision_margin": p_mdd_first - p_ctrl_first,  # + -> leans MDD
         "pred": "Major Depressive Disorder"
         if p_mdd > p_control
         else "Control (no disorder detected)",
@@ -194,12 +194,12 @@ class MinistralHandler:
         self.mdd_token_ids = encode_label("Major Depressive Disorder")
         self.control_token_ids = encode_label("Control")
         logger.info(
-            f"[DEBUG] MDD token ids:     {self.mdd_token_ids} "
-            f"→ '{self.tokenizer.decode(self.mdd_token_ids)}'"
+            f"[DEBUG] MDD token ids: {self.mdd_token_ids} "
+            f"-> '{self.tokenizer.decode(self.mdd_token_ids)}'"
         )
         logger.info(
             f"[DEBUG] Control token ids: {self.control_token_ids} "
-            f"→ '{self.tokenizer.decode(self.control_token_ids)}'"
+            f"-> '{self.tokenizer.decode(self.control_token_ids)}'"
         )
 
     def _build_prompt(self, text: str, has_mri_data: bool = False) -> str:
@@ -360,8 +360,8 @@ Return your answer as a JSON object with two fields:
         """
         Compares two conditions depending on mode:
 
-        tabular_parcel_mri   → baseline vs full (preamble + MRI data)
-        tabular_mri_preamble → baseline vs full (preamble only, no MRI data)
+        tabular_parcel_mri   -> baseline vs full (preamble + MRI data)
+        tabular_mri_preamble -> baseline vs full (preamble only, no MRI data)
         """
         if mode == "tabular_mri_preamble":
             variants = [
@@ -539,8 +539,8 @@ Return your answer as a JSON object with two fields:
         """
         Compares two conditions depending on mode:
 
-        tabular_parcel_mri   → baseline vs full (preamble + MRI data)
-        tabular_mri_preamble → baseline vs full (preamble only, no MRI data)
+        tabular_parcel_mri   -> baseline vs full (preamble + MRI data)
+        tabular_mri_preamble -> baseline vs full (preamble only, no MRI data)
         """
         if mode == "tabular_mri_preamble":
             variants = [
@@ -646,7 +646,7 @@ class InferencePipeline:
                 if mri and use_mri:
                     record["mri_data_summary"] = self._summarize_mri(mri)
                 out_f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                logger.info(f"[{filename}] → {output[:80]}")
+                logger.info(f"[{filename}] -> {output[:80]}")
 
     def run_contrastive(self, mode: str = "tabular_parcel_mri") -> None:
         """
@@ -663,7 +663,7 @@ class InferencePipeline:
           Type_D_both_wrong    — baseline=Ctrl, full=Ctrl  (both wrong)
         """
         out_path = self.config.output_file.replace(".jsonl", "_contrastive.jsonl")
-        logger.info(f"Contrastive results → {out_path}")
+        logger.info(f"Contrastive results -> {out_path}")
         n_total = 0
         counts = {
             "Type_A_both_correct": 0,
@@ -703,18 +703,18 @@ class InferencePipeline:
                 }
                 out_f.write(json.dumps(record, ensure_ascii=False) + "\n")
                 logger.info(
-                    f"✓ [{filename}] {case_type} | "
+                    f"[{filename}] {case_type} | "
                     f"base p_mdd={contrastive['baseline']['p_mdd_norm']:.3e} → "
                     f"full p_mdd={contrastive['full']['p_mdd_norm']:.3e} "
-                    f"Δ={contrastive['delta_p_mdd']:+.3e}"
+                    f"delta={contrastive['delta_p_mdd']:+.3e}"
                 )
 
         logger.info(f"\n{'=' * 50}")
         logger.info(f"Contrastive summary ({n_total} MDD patients):")
-        logger.info(f"  Type A (both correct): {counts['Type_A_both_correct']:>4}")
-        logger.info(f"  Type B (recovered):    {counts['Type_B_recovered']:>4}")
-        logger.info(f"  Type C (regressed):    {counts['Type_C_regressed']:>4}")
-        logger.info(f"  Type D (both wrong):   {counts['Type_D_both_wrong']:>4}")
+        logger.info(f"Type A (both correct):{counts['Type_A_both_correct']:>4}")
+        logger.info(f"Type B (recovered):{counts['Type_B_recovered']:>4}")
+        logger.info(f"Type C (regressed):{counts['Type_C_regressed']:>4}")
+        logger.info(f"Type D (both wrong):{counts['Type_D_both_wrong']:>4}")
         logger.info(f"{'=' * 50}")
         logger.info(f"Saved to {out_path}")
         return out_path
@@ -784,9 +784,9 @@ if __name__ == "__main__":
     )
 
     logger.info("=" * 60)
-    logger.info(f"Model      : {config.model_name}")
-    logger.info(f"Mode       : {args.mode}")
-    logger.info(f"Splits     : {args.splits}")
+    logger.info(f"Model: {config.model_name}")
+    logger.info(f"Mode: {args.mode}")
+    logger.info(f"Splits: {args.splits}")
     logger.info(f"Contrastive: {args.run_contrastive}")
     logger.info("=" * 60)
 
@@ -806,7 +806,7 @@ if __name__ == "__main__":
         )
 
         if not Path(pipeline.config.txt_mdd_path).exists():
-            logger.info(f"  Skipping — path not found: {pipeline.config.txt_mdd_path}")
+            logger.info(f"Skipping — path not found: {pipeline.config.txt_mdd_path}")
             continue
 
         if args.run_contrastive:
